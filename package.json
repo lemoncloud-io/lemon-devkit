@@ -47,7 +47,7 @@
   "author": "Steve Jung <steve@lemoncloud.io>",
   "license": "MIT",
   "dependencies": {
-    "aws-sdk": "^2.1692.0",
+    "aws-sdk": "2.1354",
     "body-parser": "^1.20.1",
     "cookie-parser": "^1.4.6",
     "cors": "^2.8.5",
