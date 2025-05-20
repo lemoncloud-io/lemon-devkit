@@ -1,0 +1,108 @@
+{
+  "name": "lemon-devkit",
+  "version": "0.0.0",
+  "description": "Lemon Serverless Micro-Service Platform for local development",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "npm run build-ts",
+    "build-ts": "tsc -v && tsc",
+    "watch-ts": "tsc -w",
+    "doc": "npm run doc:html && open dist/docs/index.html",
+    "doc:html": "typedoc src/ --exclude **/*.spec.ts --target ES6 --mode file --out dist/docs",
+    "doc:publish": "npm run doc:html && gh-pages -m \"docs(gh-pages): publish gh-pages via typedoc\" -d dist/docs",
+    "lint": "tsc --noEmit && eslint '*/**/*.{js,ts,jsx,tsx}' --fix",
+    "format": "prettier --write \"src/**/*.ts\" \"src/**/*.js\"",
+    "!test": "------- run self-test with jest -----",
+    "test": "LS=1 jest --config=jest.config.json",
+    "test.lemon": "ENV=lemon npm run test",
+    "test:dev": "LS=1 jest --config=jest.config.json --watchAll",
+    "!test:watch": "---- custom test with profile -----",
+    "test:watch": "LS=1 AWS_SDK_JS_SUPPRESS_MAINTENANCE_MODE_MESSAGE=1 jest --config=jest.config.json --watchAll",
+    "test:watch.lemon": "ENV=lemon npm run test:watch",
+    "!prepare": "------- run self-test with jest -----",
+    "prepare": "npm run build",
+    "!prepublishOnly": "npm test && npm run lint && npm run format",
+    "prepublishOnly": "npm test && npm run lint",
+    "!plato": "----- analysis code complexity -----",
+    "plato": "plato -r -d complexity dist"
+  },
+  "husky": {
+    "hooks": {
+      "!pre-commit": "lint-staged"
+    }
+  },
+  "lint-staged": {
+    "src/**/*.{js,ts,tsx,jsx}": [
+      "npm run lint",
+      "git add"
+    ]
+  },
+  "files": [
+    "dist/**/*"
+  ],
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "author": "Steve Jung <steve@lemoncloud.io>",
+  "license": "MIT",
+  "dependencies": {
+    "aws-sdk": "^2.1692.0",
+    "body-parser": "^1.20.1",
+    "cookie-parser": "^1.4.6",
+    "cors": "^2.8.5",
+    "express": "^4.18.1",
+    "js-yaml": "^4.1.0",
+    "multer": "^1.4.5-lts.1",
+    "request": "^2.88.2",
+    "request-ip": "^3.3.0",
+    "source-map-support": "^0.5.21"
+  },
+  "devDependencies": {
+    "@aws-sdk/types": "^3.804.0",
+    "@types/cookie-parser": "^1.4.2",
+    "@types/cors": "^2.8.7",
+    "@types/dotenv": "^6.1.1",
+    "@types/jest": "^27.4.1",
+    "@types/js-yaml": "^3.12.5",
+    "@types/multer": "^1.4.7",
+    "@types/request": "^2.48.8",
+    "@types/request-ip": "0.0.34",
+    "@types/supertest": "^2.0.10",
+    "@typescript-eslint/eslint-plugin": "^5.15.0",
+    "@typescript-eslint/parser": "^5.15.0",
+    "concurrently": "^5.3.0",
+    "dotenv": "^8.2.0",
+    "eslint": "^8.23.1",
+    "eslint-config-prettier": "^8.5.0",
+    "eslint-plugin-prettier": "^4.0.0",
+    "faker": "^4.1.0",
+    "gh-pages": "^5.0.0",
+    "husky": "^8.0.3",
+    "jest": "^27.5.1",
+    "lemon-core": "^4.0.1",
+    "lint-staged": "^13.1.0",
+    "prettier": "^2.7.1",
+    "superagent": "^5.3.1",
+    "supertest": "^4.0.2",
+    "ts-jest": "^27.1.5",
+    "ts-node": "^8.10.2",
+    "ttypescript": "^1.5.15",
+    "typedoc": "^0.23.15",
+    "typescript": "^4.8.3"
+  },
+  "private": false,
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/lemoncloud-io/lemon-devkit.git"
+  },
+  "keywords": [
+    "lemoncloud",
+    "lemon-core",
+    "lemon-devkit"
+  ],
+  "bugs": {
+    "url": "https://github.com/lemoncloud-io/lemon-devkit/issues"
+  },
+  "homepage": "https://github.com/lemoncloud-io/lemon-devkit#readme"
+}
