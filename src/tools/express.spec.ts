@@ -9,9 +9,11 @@
  *
  * @copyright (C) lemoncloud.io 2025 - All Rights Reserved.
  */
-import $cores, { $U, expect2, NextDecoder, NextHandler, loadJsonSync, buildEngine } from 'lemon-core';
 import { buildExpress } from './express';
 import request from 'supertest';
+
+/** run `npm i -D lemon-core */
+import $cores, { $U, expect2, NextDecoder, NextHandler, loadJsonSync, buildEngine } from 'lemon-core';
 
 /**
  * local test instance

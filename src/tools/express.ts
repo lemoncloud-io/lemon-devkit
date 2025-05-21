@@ -24,8 +24,7 @@
  *
  * @copyright (C) lemoncloud.io 2025 - All Rights Reserved.
  */
-import $cores, { LemonEngine, loadJsonSync, LambdaWEBHandler, NextContext, buildEngine } from 'lemon-core';
-import { getRunParam } from './shared';
+import { getRunParam, loadJsonSync } from './shared';
 import { asyncCredentials } from '../environ';
 
 import express, { RequestHandler } from 'express';
@@ -37,6 +36,11 @@ import http from 'http';
 import fs from 'fs';
 
 import * as requestIp from 'request-ip';
+
+type LemonEngine = any;
+type LambdaWEBHandler = any;
+type NextContext = any;
+type NextDecoder = any;
 
 //* helper to catch header value w/o case-sensitive
 export const buildHeaderGetter =
@@ -52,16 +56,22 @@ export const buildHeaderGetter =
         }, '');
     };
 
-//* create Server Instance.
-//NOTE - avoid external reference of type.
+/**
+ * create Server Instance.
+ *
+ * @param $engine - must be LemonEngine from `lemon-core`
+ * @param $web - must be LambdaWEBHandler from `lemon-core`
+ */
 export const buildExpress = (
     $engine?: LemonEngine,
     $web?: LambdaWEBHandler,
     options?: { argv?: string[]; prefix?: string; genRequestId?: () => string },
 ): { express: () => any; app: any; createServer: () => any } => {
-    $engine = $engine ?? buildEngine(global, { env: process.env });
-    $web = $web ?? $cores.cores.lambda.web;
-    if (!$engine) throw new Error('$engine is required!');
+    const errScope = `buildExpress()`;
+    // STEP.0 validate parameters.
+    if (!$engine) throw new Error(`$engine(LemonEngine) is required - ${errScope}`);
+    if (!$web) throw new Error(`$web(LambdaWEBHandler) is required - ${errScope}`);
+
     /** ****************************************************************************************************************
      *  Common Constants
      ** ****************************************************************************************************************/
@@ -273,9 +283,9 @@ export const buildExpress = (
                 if (!$web) return callback && callback(null, req);
                 return $web
                     .packContext(req.$event, req.$context)
-                    .then(context => $web.handle(req.$event, context))
-                    .then(_ => callback && callback(null, _))
-                    .catch(e => {
+                    .then(($: any) => $web.handle(req.$event, $))
+                    .then(($: any) => callback && callback(null, $))
+                    .catch((e: Error) => {
                         _err(NS, '! exp.err =', e);
                         callback && callback(e);
                     });

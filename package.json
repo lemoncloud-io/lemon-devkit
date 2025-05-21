@@ -1,6 +1,6 @@
 {
   "name": "lemon-devkit",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Lemon Serverless Micro-Service Platform for local development",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

@@ -13,6 +13,7 @@
  *
  * @copyright (C) lemoncloud.io 2025 - All Rights Reserved.
  */
+import fs from 'fs';
 
 interface AdaptiveParam<T> {
     (name: string, defval: T, argv?: string[]): T;
@@ -46,4 +47,18 @@ export const getRunParam: AdaptiveParam<boolean | number | string | object> = (o
         return val;
     }
     return defval;
+};
+
+/**
+ * load json in sync.
+ */
+export const loadJsonSync = <T extends object = any>(name: string, def = {}): T => {
+    name = !name.startsWith('./') ? `./${name}` : name;
+    try {
+        const rawdata = fs.readFileSync(name);
+        return JSON.parse(rawdata.toString()) as T;
+    } catch (e) {
+        if (def && typeof def === 'object') (def as any).error = `${e.message || e}`;
+        return def as T;
+    }
 };
