@@ -19,7 +19,7 @@ const safe = (f: () => unknown) => {
     }
 };
 
-const $environ = (env?: { [key: string]: string }): any => {
+const $environ = (env?: { [key: string]: string }, opts?: { STAGE?: string }): any => {
     //* convert all string.
     env =
         (env &&
@@ -29,7 +29,8 @@ const $environ = (env?: { [key: string]: string }): any => {
             }, {})) ||
         env;
     const proc = { env };
-    const opt = { ENV_PATH: 1 ? './env' : __dirname + '/../env' };
+    const ENV_PATH = 1 ? './env' : __dirname + '/../env';
+    const opt = { ENV_PATH, ...opts };
     return safe(() => loadEnviron(proc, opt));
 };
 
@@ -48,8 +49,22 @@ describe(`test the 'environ.ts'`, () => {
     });
 
     test('check default envion', () => {
-        const $conf = $environ(null);
-        expect2(() => $conf).toEqual({ LS: '0', LC: '1', NAME: 'none', STAGE: 'local', TS: '1', BACKBONE_API: '' });
+        const $env = { LS: '1' };
+        const $envDef = $environ($env);
+        const $expEnv = { LS: '1', LC: '1', NAME: 'none', STAGE: 'local', TS: '1', NS: 'TT' };
+        expect2(() => $envDef).toEqual({ ...$expEnv });
+
+        const $envTst = $environ($env, { STAGE: 'test' });
+        expect2(() => $envTst).toEqual({ ...$expEnv, LOCAL_ACCOUNT: 'my-local-iid', STAGE: 'test' });
+
+        const $envLoc = $environ($env, { STAGE: 'local' });
+        expect2(() => $envLoc).toEqual({ ...$expEnv });
+
+        const $envDev = $environ($env, { STAGE: 'dev' });
+        expect2(() => $envDev).toEqual({ ...$expEnv, STAGE: 'develop' });
+
+        const $envPrd = $environ($env, { STAGE: 'prod' });
+        expect2(() => $envPrd).toEqual({ ...$expEnv, STAGE: 'production', NS: 'SS', TS: '0' });
     });
 
     test('check unknown envion.stage', () => {

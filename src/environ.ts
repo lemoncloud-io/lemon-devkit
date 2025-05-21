@@ -66,11 +66,10 @@ export interface CrendentialForAWS {
 export const loadEnviron = (process: any, options?: EnvironmentSet) => {
     options = options || {};
     const { ENV, ENV_PATH } = options;
-    let { STAGE } = options;
     const $env = (process && process.env) || {};
     const QUIET = 0 ? 0 : $env['LS'] === '1'; // LOG SILENT - PRINT NO LOG MESSAGE
     const PROFILE = ENV || $env['PROFILE'] || $env['ENV'] || 'none'; // Environment Profile Name.
-    STAGE = STAGE || $env['STAGE'] || $env['NODE_ENV'] || 'local'; // Global STAGE/NODE_ENV For selecting.
+    const STAGE = options?.STAGE || $env['STAGE'] || $env['NODE_ENV'] || 'local'; // Global STAGE/NODE_ENV For selecting.
     const _log = QUIET ? (...a: any) => {} : console.log;
     const isLocal = STAGE === 'local';
     if (!isLocal) _log(`! PROFILE=${PROFILE} STAGE=${STAGE}`);
