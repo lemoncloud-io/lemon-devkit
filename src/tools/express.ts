@@ -24,10 +24,10 @@
  *
  * @copyright (C) lemoncloud.io 2025 - All Rights Reserved.
  */
-import { LemonEngine, loadJsonSync, LambdaWEBHandler, NextContext } from 'lemon-core';
+import $cores, { LemonEngine, loadJsonSync, LambdaWEBHandler, NextContext, buildEngine } from 'lemon-core';
 import { getRunParam } from './shared';
+import { asyncCredentials } from '../environ';
 
-import AWS from 'aws-sdk';
 import express, { RequestHandler } from 'express';
 import cors from 'cors';
 import bodyParser from 'body-parser';
@@ -55,12 +55,13 @@ export const buildHeaderGetter =
 //* create Server Instance.
 //NOTE - avoid external reference of type.
 export const buildExpress = (
-    $engine: LemonEngine,
-    $web: LambdaWEBHandler,
+    $engine?: LemonEngine,
+    $web?: LambdaWEBHandler,
     options?: { argv?: string[]; prefix?: string; genRequestId?: () => string },
 ): { express: () => any; app: any; createServer: () => any } => {
+    $engine = $engine ?? buildEngine(global, { env: process.env });
+    $web = $web ?? $cores.cores.lambda.web;
     if (!$engine) throw new Error('$engine is required!');
-    options = options || {};
     /** ****************************************************************************************************************
      *  Common Constants
      ** ****************************************************************************************************************/
@@ -76,7 +77,7 @@ export const buildExpress = (
 
     const NS = $U.NS('EXPR', 'cyan');
     const $pack = loadJsonSync('package.json');
-    const argv = options.argv || process.argv || [];
+    const argv = options?.argv || process?.argv || [];
 
     const NAME = $pack.name || 'LEMON API';
     const VERS = $pack.version || '0.0.0';
@@ -86,16 +87,21 @@ export const buildExpress = (
     IS_WSC && _inf(NS, `! IS_WSC=`, IS_WSC);
 
     //* dynamic loading credentials by profile. (search PROFILE -> NAME)
-    (() => {
+    const _loadCred = async () => {
         //NOTE! - DO NOT CHANGE CONFIG IN LAMBDA ENV (USE ROLE CONFIG).
         const ALFN = $engine.environ('AWS_LAMBDA_FUNCTION_NAME', '') as string;
-        if (ALFN) return;
+        if (ALFN) {
+            _log(NS, '!WARN! profile ignored due to AWS_LAMBDA_FUNCTION_NAME =', ALFN);
+            return;
+        }
+
         //NOTE! - OR, TRY TO LOAD CREDENTIALS BY PROFILE NAME.
         const NAME = $engine.environ('NAME', '') as string;
         const profile = $engine.environ('PROFILE', NAME) as string;
-        const credentials = new AWS.SharedIniFileCredentials({ profile });
-        if (profile) AWS.config.credentials = credentials;
-    })();
+        // const credentials = new AWS.SharedIniFileCredentials({ profile });
+        // if (profile) AWS.config.credentials = credentials;
+        return asyncCredentials(profile);
+    };
 
     /** ****************************************************************************************************************
      *  Initialize Express
@@ -104,7 +110,7 @@ export const buildExpress = (
     const app: any = express();
     const uploader = multer({ dest: '../tmp/' });
     const genRequestId =
-        options.genRequestId ||
+        options?.genRequestId ||
         ((): string => {
             const msec = new Date().getMilliseconds() % 1000;
             return `${$U.ts()}.${msec < 10 ? '00' : msec < 100 ? '0' : ''}${msec}`;
@@ -234,16 +240,12 @@ export const buildExpress = (
      ** *******************************************************************************************************************/
     //* default app.
     app.get('', (req: any, res: any) => {
-        //WARN! - must be matched with the `LambdaWEBHandler.handleProtocol()`.
-        const $env = (process && process.env) || {};
-        // const $pack = JSON.parse(fs.readFileSync('package.json', { encoding: 'utf8' }).toString());
-        // _log(NS, `stat =`, $stat);
-        // _log(NS, `pack =`, $pack);
+        const $env = process?.env || {};
         const $stat = fs.statSync('package.json');
         const modified = $U.ts($U.F($stat.ctimeMs, 0));
-        const name = $pack.name || 'LEMON API';
-        const version = $pack.version || '0.0.0';
-        const core = $pack && $pack.dependencies && $pack.dependencies['lemon-core'];
+        const name = $pack?.name ?? 'LEMON API';
+        const version = $pack?.version ?? '0.0.0';
+        const core = $pack?.dependencies['lemon-core'] || $pack?.devDependencies['lemon-core'] || '';
         const msgs = [
             `${name}/${version}`,
             `lemon-core/${core || ''}`,
@@ -257,14 +259,18 @@ export const buildExpress = (
     //* handler map.
     if (true) {
         //* route prefix
-        const ROUTE_PREFIX = `${(options && options.prefix) || ''}`;
+        const ROUTE_PREFIX = `${options?.prefix || ''}`;
 
         //* handle request to handler.
         const next_middle =
             (type: string) =>
-            (req: any): Promise<void> => {
+            async (req: any): Promise<void> => {
                 const callback = req.$callback;
+                const $profile = await _loadCred();
+                req.$event.requestContext = { ...req.$event.requestContext, profile: $profile?.profile }; // make sure `profile`
                 req.$event.pathParameters = { type, ...req.$event.pathParameters }; // make sure `type`
+                //* echo back `event` if no handler.
+                if (!$web) return callback && callback(null, req);
                 return $web
                     .packContext(req.$event, req.$context)
                     .then(context => $web.handle(req.$event, context))
@@ -279,9 +285,8 @@ export const buildExpress = (
         const RESERVES = 'id,log,inf,err,extend,ts,dt,environ'.split(',');
         // support single char path.
         const isValidName = (name: string) => /^[a-z][a-z0-9\-_]*$/.test(name) && RESERVES.indexOf(name) < 0;
-        const $map: any = $web.getHandlerDecoders();
-        const keys = Object.keys($map);
-        // _inf(NS, '! express.keys =', keys);
+        const $map: any = $web?.getHandlerDecoders();
+        const keys = $map ? Object.keys($map) : [];
         const handlers = keys
             .filter(isValidName)
             .map(name => {

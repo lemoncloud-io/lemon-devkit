@@ -25,7 +25,7 @@ process.env = Object.assign(process.env, $env);
 
 //* - load engine after `process.env`
 import { $U, _log, _inf, _err, loadJsonSync } from 'lemon-core';
-import { getRunParam } from './shared';
+import { getRunParam } from './tools/shared';
 
 //* - initial values.
 const NS = $U.NS('EXEC', 'cyan');

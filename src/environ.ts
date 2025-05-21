@@ -23,8 +23,32 @@
  */
 import fs from 'fs';
 import * as yaml from 'js-yaml';
-import AWS from 'aws-sdk';
+import { fromIni } from '@aws-sdk/credential-providers';
 import { EnvironmentSet } from 'lemon-core/dist/environ';
+
+/**
+ * type: `CrendentialForAWS`
+ * - common interface for AWS credentials.
+ * - used for `AWS.config.credentials` or `AWS.Credentials`
+ */
+export interface CrendentialForAWS {
+    /**
+     * AWS access key ID
+     */
+    readonly accessKeyId: string;
+    /**
+     * AWS secret access key
+     */
+    readonly secretAccessKey: string;
+    /**
+     * A security or session token to use with these credentials. Usually
+     * present for temporary credentials.
+     */
+    readonly sessionToken?: string;
+
+    /** (optional) the loaded profile name if applicable */
+    readonly profile?: string;
+}
 
 /**
  * loader `<profile>.yml`
@@ -81,6 +105,10 @@ export const loadEnviron = (process: any, options?: EnvironmentSet) => {
     })($env);
 };
 
+interface Logger {
+    (title: string, msg?: string): void;
+    (title: string, ...args: any[]): void;
+}
 /**
  * load AWS credential profile via env.NAME
  *
@@ -91,13 +119,18 @@ export const loadEnviron = (process: any, options?: EnvironmentSet) => {
  * @param $proc     process (default `global.process`)
  * @param $info     info logger (default `console.info`)
  */
-export const loadProfile = ($proc?: { env?: any }, $info?: (title: string, msg?: string) => void) => {
+export const loadProfile = async (
+    $proc?: { env?: any },
+    options?: {
+        info?: Logger;
+    },
+): Promise<CrendentialForAWS> => {
     $proc = $proc === undefined ? process : $proc;
-    $info = $info === undefined ? console.info : $info;
+    const $info = options?.info ?? console.info;
     const $env = loadEnviron($proc);
     const PROFILE = `${$env['NAME'] != 'none' ? $env['NAME'] || '' : ''}`;
     if (PROFILE && $info) $info('! PROFILE =', PROFILE);
-    return credentials(PROFILE);
+    return asyncCredentials(PROFILE);
 };
 
 /**
@@ -106,17 +139,29 @@ export const loadProfile = ($proc?: { env?: any }, $info?: (title: string, msg?:
  * !WARN! - could not catch AWS.Error `Profile null not found` via callback.
  *
  * @param profile   profile name of AWS.
+ * @deprecated use `asyncCredentials` instead.
  */
 export const credentials = (profile: string): string => {
     if (!profile) return '';
-    const credentials = new AWS.SharedIniFileCredentials({ profile });
-    AWS.config.credentials = credentials;
-    return `${profile}`;
+    throw new Error('WARN! credentials() is deprecated. use `asyncCredentials()` instead!');
 };
 
 /**
  * return whether AWS credentials set
+ *
+ * @deprecated use `asyncCredentials` instead.
  */
 export const hasCredentials = (): boolean => {
-    return !!AWS.config.credentials;
+    return false;
+};
+
+/**
+ * dynamic loading credentials by profile. (search PROFILE -> NAME)
+ *
+ * @returns {Promise<any>} - AWS credentials
+ */
+export const asyncCredentials = async (profile: string): Promise<CrendentialForAWS> => {
+    const provider = fromIni({ profile });
+    const $res = await provider();
+    return { ...$res, profile };
 };

@@ -9,17 +9,25 @@
  *
  * @copyright (C) lemoncloud.io 2025 - All Rights Reserved.
  */
-import $cores, { $engine, $U, expect2, NextDecoder, NextHandler, loadJsonSync } from 'lemon-core';
+import $cores, { $U, expect2, NextDecoder, NextHandler, loadJsonSync, buildEngine } from 'lemon-core';
 import { buildExpress } from './express';
 import request from 'supertest';
 
+/**
+ * local test instance
+ */
 export const instance = async () => {
-    await $engine.initialize();
+    // STEP.1 - build engine
+    const $engine = buildEngine(global, { env: {} });
+    const $pack = loadJsonSync('package.json');
+
+    // STEP.2 - prepare handler.
     const $web = $cores.cores.lambda.web;
     $web.setHandler('test', decode_next_handler);
     const genRequestId = () => 'express-test-request-id';
+
+    // STEP.3 - build express server.
     const $express = buildExpress($engine, $web, { genRequestId });
-    const $pack = loadJsonSync('package.json');
     return { $express, $engine: { ...$engine }, $web, $pack };
 };
 
@@ -59,16 +67,16 @@ const decode_next_handler: NextDecoder = (mode, id, cmd) => {
 //! main test body.
 describe('express', () => {
     it('should pass express route: GET /', async () => {
-        const { $express, $engine, $web, $pack } = await instance();
+        const { $express, $pack } = await instance();
         const app = $express.app;
         const res = await request(app).get('/');
         expect2(() => res.status).toEqual(200);
-        expect2(() => res.text.split('\n')[0]).toEqual(`lemon-core/${$pack.version}`);
+        expect2(() => res.text.split('\n')[0]).toEqual(`lemon-devkit/${$pack.version}`);
     });
 
     //* check id + cmd param
     it('should pass express route: GET /test/abc/hi', async () => {
-        const { $express, $engine, $web, $pack } = await instance();
+        const { $express } = await instance();
         const app = $express.app;
         const res = await request(app).get('/test/abc/hi');
         expect2(res, 'status,body').toEqual({ status: 200, body: { id: 'abc', cmd: 'hi', hello: 'hi abc' } });
@@ -76,7 +84,7 @@ describe('express', () => {
 
     //* check mode
     it('should pass express routes', async () => {
-        const { $express, $engine, $web, $pack } = await instance();
+        const { $express, $pack } = await instance();
         const ACCOUNT_ID = $U.env('USER', 'travis'); // it must be 'travis' in `travis-ci.org`
         const app = $express.app;
         expect2(await request(app).get('/test/abc'), 'status').toEqual({ status: 200 });
@@ -109,7 +117,7 @@ describe('express', () => {
                         domain: ACCOUNT_ID == 'travis' ? '127.0.0.1' : '127.0.0.1',
                         identity: {},
                         requestId: 'express-test-request-id',
-                        source: `api://${ACCOUNT_ID}@lemon-core-dev#${$pack.version}`,
+                        source: `api://${ACCOUNT_ID}@lemon-devkit-dev#${$pack.version}`,
                         userAgent: 'node-superagent/3.8.3',
                         cookie: { A: '1', B: '2' },
                     },

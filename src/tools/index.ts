@@ -10,4 +10,3 @@
  */
 export * from './express';
 export * from './shared';
-export * from './exec-cli';
