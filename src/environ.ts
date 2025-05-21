@@ -138,7 +138,8 @@ export const loadProfile = async (
  * !WARN! - could not catch AWS.Error `Profile null not found` via callback.
  *
  * @param profile   profile name of AWS.
- * @deprecated use `asyncCredentials` instead.
+ *
+ * @deprecated use `asyncCredentials()` instead.
  */
 export const credentials = (profile: string): string => {
     if (!profile) return '';
@@ -157,7 +158,7 @@ export const hasCredentials = (): boolean => {
 /**
  * dynamic loading credentials by profile. (search PROFILE -> NAME)
  *
- * @returns {Promise<any>} - AWS credentials
+ * @returns {Promise<CrendentialForAWS>} - AWS credentials
  */
 export const asyncCredentials = async (profile: string): Promise<CrendentialForAWS> => {
     const provider = fromIni({ profile });
