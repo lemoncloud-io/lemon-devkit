@@ -25,7 +25,7 @@
  * @copyright (C) lemoncloud.io 2025 - All Rights Reserved.
  */
 import { getRunParam, loadJsonSync } from './shared';
-import { asyncCredentials } from '../environ';
+import { asyncCredentials, CrendentialForAWS } from '../environ';
 
 import express, { RequestHandler } from 'express';
 import cors from 'cors';
@@ -110,7 +110,11 @@ export const buildExpress = (
         const profile = $engine.environ('PROFILE', NAME) as string;
         // const credentials = new AWS.SharedIniFileCredentials({ profile });
         // if (profile) AWS.config.credentials = credentials;
-        return asyncCredentials(profile);
+        return asyncCredentials(profile).catch((e: Error): CrendentialForAWS => {
+            const error = `${e?.message ?? e}`.toLowerCase();
+            if (error.includes('could not resolve credentials') && error.includes('[default]')) return;
+            throw e;
+        });
     };
 
     /** ****************************************************************************************************************

@@ -36,6 +36,8 @@ const $environ = (env?: { [key: string]: string }, opts?: { STAGE?: string }): a
 
 //! main test body.
 describe(`test the 'environ.ts'`, () => {
+    const ENV = process?.env?.ENV ?? '';
+
     test('check basic environ()', () => {
         const $conf = $environ({ LS: '1', ENV: 'lemon', NODE_ENV: 'prod' });
         expect2(() => $conf, 'NAME').toEqual({ NAME: 'lemon' });
@@ -51,7 +53,7 @@ describe(`test the 'environ.ts'`, () => {
     test('check default envion', () => {
         const $env = { LS: '1' };
         const $envDef = $environ($env);
-        const $expEnv = { LS: '1', LC: '1', NAME: 'none', STAGE: 'local', TS: '1', NS: 'TT' };
+        const $expEnv = { LS: '1', LC: '1', NAME: '', STAGE: 'local', TS: '1', NS: 'TT' };
         expect2(() => $envDef).toEqual({ ...$expEnv });
 
         const $envTst = $environ($env, { STAGE: 'test' });
@@ -83,5 +85,15 @@ describe(`test the 'environ.ts'`, () => {
         expect2(() => $conf.NAME).toEqual('test-lemon');
         expect2(() => $conf.STAGE).toEqual('local');
         expect2(() => $conf.LIST).toEqual('a, b');
+    });
+
+    it(`should pass loadEnviron(${ENV})`, async () => {
+        //* check `env/<ENV>.yml`
+        const _load = (ENV?: string) => loadEnviron(null, { ENV });
+        expect2(() => _load(null), 'NAME').toEqual({ NAME: '' });
+        expect2(() => _load(''), 'NAME').toEqual({ NAME: '' });
+        expect2(() => _load('none'), 'NAME').toEqual({ NAME: '' });
+        expect2(() => _load('lemon'), 'NAME').toEqual({ NAME: 'test-lemon' });
+        expect2(() => _load('test'), 'NAME').toEqual('FILE NOT FOUND:./env/test.yml');
     });
 });
