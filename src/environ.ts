@@ -51,6 +51,11 @@ export interface CrendentialForAWS {
 }
 
 /**
+ * Simple string set
+ */
+type SimpleStringSet = { [key: string]: string };
+
+/**
  * loader `<profile>.yml`
  *
  * **Determine Environ Target**
@@ -63,10 +68,10 @@ export interface CrendentialForAWS {
  * @param process the main process instance.
  * @param options (optional) default option.
  */
-export const loadEnviron = (process: any, options?: EnvironmentSet) => {
+export const loadEnviron = (process: any, options?: EnvironmentSet): SimpleStringSet => {
     options = options || {};
     const { ENV, ENV_PATH } = options;
-    const $env = (process && process.env) || {};
+    const $env: SimpleStringSet = (process && process.env) || {};
     const QUIET = 0 ? 0 : $env['LS'] === '1'; // LOG SILENT - PRINT NO LOG MESSAGE
     const PROFILE = ENV || $env['PROFILE'] || $env['ENV'] || 'none'; // Environment Profile Name.
     const STAGE = options?.STAGE || $env['STAGE'] || $env['NODE_ENV'] || 'local'; // Global STAGE/NODE_ENV For selecting.
@@ -82,7 +87,7 @@ export const loadEnviron = (process: any, options?: EnvironmentSet) => {
         if (!isLocal) _log(`! loading yml-file: "${path}"`);
         const $doc: any = yaml.load(fs.readFileSync(path, 'utf8'));
         const $src: any = ($doc && $doc[STAGE]) || {};
-        const $new = Object.keys($src).reduce(($O: any, key: string) => {
+        const $new = Object.keys($src).reduce(($O: SimpleStringSet, key: string) => {
             const val = $src[key];
             if (typeof val == 'string' && val.startsWith('!')) {
                 //* force to update environ.
@@ -92,7 +97,7 @@ export const loadEnviron = (process: any, options?: EnvironmentSet) => {
                 $O[key] = val.join(', ');
             } else if ($det[key] === undefined) {
                 //* override only if undefined.
-                $O[key] = `${val}`; // as string.
+                $O[key] = `${val ?? ''}`; // as string.
             } else {
                 //* ignore!.
             }
@@ -117,18 +122,20 @@ interface Logger {
  * ````
  * @param $proc     process (default `global.process`)
  * @param $info     info logger (default `console.info`)
+ * @returns profile-name defined as `NAME` in environment (none is ignored).
  */
-export const loadProfile = async (
+export const loadProfile = (
     $proc?: { env?: any },
     options?: {
         info?: Logger;
     },
-): Promise<string> => {
+): string => {
     $proc = $proc === undefined ? process : $proc;
-    const $info = options?.info ?? console.info;
+    const $info = options?.info === undefined ? console.info : options.info;
     const $env = loadEnviron($proc);
-    const PROFILE = `${$env['NAME'] != 'none' ? $env['NAME'] || '' : ''}`;
-    if (PROFILE && $info) $info('! PROFILE =', PROFILE);
+    const NAME = $env?.['NAME'] ?? '';
+    const PROFILE = `${NAME !== 'none' ? NAME : ''}`; // ignore 'none'.
+    if (PROFILE && typeof $info === 'function') $info('! PROFILE =', PROFILE);
     return PROFILE;
 };
 
