@@ -123,13 +123,13 @@ export const loadProfile = async (
     options?: {
         info?: Logger;
     },
-): Promise<CrendentialForAWS> => {
+): Promise<string> => {
     $proc = $proc === undefined ? process : $proc;
     const $info = options?.info ?? console.info;
     const $env = loadEnviron($proc);
     const PROFILE = `${$env['NAME'] != 'none' ? $env['NAME'] || '' : ''}`;
     if (PROFILE && $info) $info('! PROFILE =', PROFILE);
-    return asyncCredentials(PROFILE);
+    return PROFILE;
 };
 
 /**
