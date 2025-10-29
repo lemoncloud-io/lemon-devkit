@@ -26,6 +26,10 @@ export const instance = async () => {
     // STEP.2 - prepare handler.
     const $web = $cores.cores.lambda.web;
     $web.setHandler('test', decode_next_handler);
+    $web.setHandler('', decode_next_handler);
+    $web.setHandler('_', decode_next_handler);
+    $web.setHandler('_tst', decode_next_handler);
+    $web.setHandler('_ tst', decode_next_handler);
     const genRequestId = () => 'express-test-request-id';
 
     // STEP.3 - build express server.
@@ -35,7 +39,7 @@ export const instance = async () => {
 
 //* router of `/test/:id/:cmd?`
 const decode_next_handler: NextDecoder = (mode, id, cmd) => {
-    let next: NextHandler = null;
+    let next: NextHandler = null as any;
     // _log(`> decode: mode=${mode} /${id}/${cmd || ''}`)
     switch (mode) {
         case 'LIST':
@@ -79,9 +83,14 @@ describe('express', () => {
     //* check id + cmd param
     it('should pass express route: GET /test/abc/hi', async () => {
         const { $express } = await instance();
-        const app = $express.app;
-        const res = await request(app).get('/test/abc/hi');
-        expect2(res, 'status,body').toEqual({ status: 200, body: { id: 'abc', cmd: 'hi', hello: 'hi abc' } });
+        const $exp = { status: 200, body: { id: 'abc', cmd: 'hi', hello: 'hi abc' } };
+        const $app = $express.app;
+        const _get = async (type?: string) => await request($app).get(`/${type ?? 'test'}/abc/hi`);
+        expect2(await _get(), 'status,body').toEqual({ status: 200, body: { ...$exp.body } });
+        expect2(await _get(''), 'status,body').toEqual({ status: 404, body: {} });
+        expect2(await _get('_'), 'status,body').toEqual({ status: 200, body: { ...$exp.body } });
+        expect2(await _get('_tst'), 'status,body').toEqual({ status: 200, body: { ...$exp.body } });
+        expect2(await _get('_ tst'), 'status,body').toEqual({ status: 404, body: {} });
     });
 
     //* check mode
@@ -89,6 +98,7 @@ describe('express', () => {
         const { $express, $pack } = await instance();
         const ACCOUNT_ID = $U.env('USER', 'travis'); // it must be 'travis' in `travis-ci.org`
         const app = $express.app;
+
         expect2(await request(app).get('/test/abc'), 'status').toEqual({ status: 200 });
         expect2(await request(app).get('/test1/abc'), 'status,body').toEqual({ status: 404, body: {} });
         expect2(await request(app).get('/test/0'), 'status').toEqual({ status: 404 });

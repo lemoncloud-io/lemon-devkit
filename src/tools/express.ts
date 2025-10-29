@@ -296,9 +296,9 @@ export const buildExpress = (
             };
 
         //* register automatically endpont.
-        const RESERVES = 'id,log,inf,err,extend,ts,dt,environ'.split(',');
+        const RESERVES = ',id,log,inf,err,extend,ts,dt,environ'.split(',');
         // support single char path.
-        const isValidName = (name: string) => /^[a-z][a-z0-9\-_]*$/.test(name) && RESERVES.indexOf(name) < 0;
+        const isValidName = (name: string) => /^[_]?[a-z]?[a-z0-9\-_]*$/.test(name) && RESERVES.indexOf(name) < 0;
         const $map: any = $web?.getHandlerDecoders();
         const keys = $map ? Object.keys($map) : [];
         const handlers = keys
@@ -306,7 +306,8 @@ export const buildExpress = (
             .map(name => {
                 //* check if valid name && function.
                 const main = $map[name];
-                const type = `${name}`.split('_').join('-'); // change '_' to '-'.
+                // const type = `${name}`.split('_').join('-'); // change '_' to '-'.
+                const type = `${name}`;
                 if (typeof main !== 'function')
                     throw new Error(`.${name} should be function handler. but type=` + typeof main);
 
