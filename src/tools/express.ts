@@ -166,6 +166,10 @@ export const buildExpress = (
                 identity: {
                     sourceIp,
                     userAgent,
+                    cognitoIdentityPoolId: null as string,
+                    apiKey: undefined as string, // api-key if applicable.
+                    caller: undefined as string, // caller string like AROXXXXXX
+                    accessKey: undefined as string, // access-key used to sign
                 },
             },
         };
@@ -187,6 +191,9 @@ export const buildExpress = (
                         return obj;
                     };
                     context.cookie = parseCookies(`${Array.isArray(val) ? val.join('; ') : val || ''}`.trim());
+                } else if (key == 'x-api-key') {
+                    console.log('>>> found x-api-key header =', val);
+                    event.requestContext.identity.apiKey = `${val || ''}`.trim();
                 }
             });
         }
