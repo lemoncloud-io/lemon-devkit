@@ -1,0 +1,244 @@
+#!/usr/bin/env node
+/**
+ * `lemon-fields` CLI
+ * - `migrate`(one-shot codemod), `gen`(기본 생성기) subcommand를 제공한다.
+ * - `--check`는 파일을 쓰지 않고 CI drift guard로 동작한다.
+ *
+ * @author      Claire <claire@lemoncloud.io>
+ * @date        2026-04-17 added `lemon-fields` CLI.
+ * @copyright (C) lemoncloud.io 2026 - All Rights Reserved.
+ */
+import * as path from 'path';
+
+import { runGen, writeRegistry } from '../fields/field-gen';
+import { runMigrate } from '../fields/field-migrate';
+
+type Subcommand = 'gen' | 'migrate';
+
+interface ParsedFlags {
+    /** `gen --check`: 파일을 쓰지 않고 drift만 확인 */
+    check?: boolean;
+    /** `gen --allow-legacy`: 남은 legacy `keys<T>()` 허용 */
+    'allow-legacy'?: boolean;
+    /** `gen --allow-empty`: 호출 위치가 없어도 성공 처리 */
+    'allow-empty'?: boolean;
+    /** `migrate --allow-skips`: 자동 처리 불가 위치를 throw 대신 보고 */
+    'allow-skips'?: boolean;
+    /** `migrate --dry-run`: 파일을 쓰지 않고 결과만 계산 */
+    'dry-run'?: boolean;
+    /** `migrate --diff`: 변경될 source diff 출력 */
+    diff?: boolean;
+    /** `gen/migrate --report`: 생성 또는 rewrite 요약 출력 */
+    report?: boolean;
+    /** migration 완료 후 ts-transformer-keys transformer plugin 제거 */
+    'update-tsconfig'?: boolean;
+    /** spec 파일 scan 여부. `--no-include-spec`이면 false */
+    'include-spec'?: boolean;
+    /** `--help` 또는 `-h` */
+    help?: boolean;
+    /** custom tsconfig 경로 */
+    tsconfig?: string;
+    /** custom registry output 경로 */
+    out?: string;
+    /** scan 대상 glob 목록 */
+    paths?: string[];
+}
+
+interface ParsedArgs {
+    subcommand: Subcommand;
+    flags: ParsedFlags;
+}
+
+const USAGE = `
+lemon-fields — materialise \`fieldKeys.<name><T>()\` call sites into a committed registry.
+
+USAGE
+  lemon-fields [gen]            Regenerate src/generated/field-registry.ts (default)
+  lemon-fields migrate          One-shot codemod: rewrite legacy \`keys<T>()\` sites.
+  lemon-fields --check          CI guard: fail if the generated file is out-of-date.
+
+OPTIONS (both subcommands)
+  --tsconfig <path>             default: tsconfig.json
+  --out <path>                  default: src/generated/field-registry.ts
+  --include-spec                default: true   (pass --no-include-spec to exclude)
+  --paths <glob> [--paths ...]  limit scan to these files
+
+GEN-ONLY
+  --check                       do not write; exit 1 if out-of-date
+  --report                      print generated key/source/field table
+  --allow-legacy                accept leftover \`keys<T>()\` sites mid-migration
+  --allow-empty                 do not fail if no call sites are found
+
+MIGRATE-ONLY
+  --dry-run                     compute changes without writing
+  --diff                        print a compact source diff
+  --allow-skips                 report unrewritable sites instead of failing
+  --update-tsconfig             remove ts-transformer-keys transformer plugin after full migration
+  --report                      print summary table
+`.trim();
+
+const parse = (argv: string[]): ParsedArgs => {
+    const [head, ...tail] = argv;
+    const hasSubcommand = head === 'migrate' || head === 'gen';
+    const subcommand: Subcommand = hasSubcommand ? head : 'gen';
+    const tokens = hasSubcommand ? tail : argv;
+    return { subcommand, flags: parseFlags(tokens) };
+};
+
+const requireFlagValue = (key: string, value: string | undefined): string => {
+    if (!value || value.startsWith('--')) throw new Error(`missing value for --${key}\n\n${USAGE}`);
+    return value;
+};
+
+const parseFlags = (tokens: string[], flags: ParsedFlags = {}): ParsedFlags => {
+    const [tok, value, ...rest] = tokens;
+    if (!tok) return flags;
+    if (!tok.startsWith('--')) return parseFlags(tokens.slice(1), flags);
+
+    const key = tok.slice(2);
+    switch (key) {
+        case 'check':
+        case 'allow-legacy':
+        case 'allow-empty':
+        case 'allow-skips':
+        case 'dry-run':
+        case 'diff':
+        case 'report':
+        case 'update-tsconfig':
+        case 'include-spec':
+            return parseFlags(tokens.slice(1), { ...flags, [key]: true });
+        case 'no-include-spec':
+            return parseFlags(tokens.slice(1), { ...flags, 'include-spec': false });
+        case 'tsconfig':
+            return parseFlags(rest, { ...flags, tsconfig: requireFlagValue(key, value) });
+        case 'out':
+            return parseFlags(rest, { ...flags, out: requireFlagValue(key, value) });
+        case 'paths':
+            return parseFlags(rest, { ...flags, paths: [...(flags.paths ?? []), requireFlagValue(key, value)] });
+        case 'help':
+        case 'h':
+            return parseFlags(tokens.slice(1), { ...flags, help: true });
+        default:
+            throw new Error(`unknown flag: --${key}\n\n${USAGE}`);
+    }
+};
+
+const commonOpts = (flags: ParsedArgs['flags']) => ({
+    tsconfig: flags.tsconfig ?? 'tsconfig.json',
+    out: flags.out ?? 'src/generated/field-registry.ts',
+    includeSpec: flags['include-spec'] === false ? false : true,
+    paths: flags.paths,
+});
+
+const genReportLine = (entry: ReturnType<typeof runGen>['entries'][number]): string => {
+    const legacy = entry.legacy ? ' [legacy]' : '';
+    return `  ${entry.name}  ${entry.relPath}#${entry.typeArgText}  fields(${entry.fields.length}): ${entry.fields.join(
+        ', ',
+    )}${legacy}\n`;
+};
+
+const writeGenReport = (entries: ReturnType<typeof runGen>['entries']): void => {
+    const label = `${entries.length} generated entr${entries.length === 1 ? 'y' : 'ies'}`;
+    process.stdout.write(`[lemon-fields] report — ${label}:\n`);
+    for (const entry of [...entries].sort((a, b) => a.name.localeCompare(b.name))) {
+        process.stdout.write(genReportLine(entry));
+    }
+};
+
+const runGenCmd = (flags: ParsedArgs['flags']): number => {
+    const common = commonOpts(flags);
+    const cwd = process.cwd();
+    const outAbs = path.resolve(cwd, common.out);
+
+    const res = runGen({
+        ...common,
+        allowLegacy: Boolean(flags['allow-legacy']),
+        allowEmpty: Boolean(flags['allow-empty']),
+        cwd,
+    });
+
+    const isCheck = Boolean(flags['check']);
+    if (isCheck) {
+        if (res.changed) {
+            process.stderr.write(
+                `[lemon-fields] registry drift detected at ${common.out}. Re-run \`lemon-fields gen\` and commit.\n`,
+            );
+            return 1;
+        }
+        process.stdout.write(`[lemon-fields] ok — ${res.entries.length} entries up-to-date.\n`);
+        return 0;
+    }
+
+    if (res.changed) writeRegistry(outAbs, res.content);
+    process.stdout.write(
+        `[lemon-fields] gen — ${res.entries.length} entries, ${res.changed ? 'wrote' : 'no change to'} ${common.out}\n`,
+    );
+    if (flags['report']) writeGenReport(res.entries);
+    if (res.skipped.length > 0) {
+        process.stderr.write(`[lemon-fields] skipped ${res.skipped.length} site(s):\n`);
+        for (const s of res.skipped) process.stderr.write(`  - ${s.relPath} :: ${s.typeArgText} (${s.reason})\n`);
+    }
+    if (res.legacyLeftovers.length > 0) {
+        process.stderr.write(`[lemon-fields] legacy leftovers (--allow-legacy): ${res.legacyLeftovers.length}\n`);
+    }
+    return 0;
+};
+
+const runMigrateCmd = (flags: ParsedArgs['flags']): number => {
+    const common = commonOpts(flags);
+    const res = runMigrate({
+        ...common,
+        dryRun: Boolean(flags['dry-run']),
+        diff: Boolean(flags['diff']),
+        allowSkips: Boolean(flags['allow-skips']),
+        updateTsconfig: Boolean(flags['update-tsconfig']),
+        cwd: process.cwd(),
+    });
+    const mode = flags['dry-run'] ? '[dry-run] ' : '';
+    process.stdout.write(
+        `[lemon-fields] ${mode}migrate — rewrote ${res.rewrites.length} site(s), ` +
+            `${res.changedFiles.length} file(s)${res.wroteStub ? '; wrote bootstrap stub' : ''}.\n`,
+    );
+    if (flags['report']) {
+        for (const r of res.rewrites)
+            process.stdout.write(
+                `  ${r.relPath}  keys<${r.typeArgText}>() -> fieldKeys.${r.name}<${r.typeArgText}>()\n`,
+            );
+    }
+    if (res.diffs?.length) {
+        process.stdout.write(`${res.diffs.join('\n')}\n`);
+    }
+    if (res.updatedTsconfig) {
+        process.stdout.write(
+            `[lemon-fields] ${
+                flags['dry-run'] ? 'would update' : 'updated'
+            } tsconfig: removed ts-transformer-keys transformer plugin.\n`,
+        );
+    }
+    if (res.skipped.length > 0) {
+        process.stderr.write(`[lemon-fields] skipped ${res.skipped.length} site(s):\n`);
+        for (const s of res.skipped)
+            process.stderr.write(`  - ${s.relPath} :: keys<${s.typeArgText}>() — ${s.reason}\n`);
+    }
+    return 0;
+};
+
+export const main = (argv: string[]): number => {
+    try {
+        const { subcommand, flags } = parse(argv);
+        if (flags['help']) {
+            process.stdout.write(`${USAGE}\n`);
+            return 0;
+        }
+        return subcommand === 'migrate' ? runMigrateCmd(flags) : runGenCmd(flags);
+    } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        process.stderr.write(`[lemon-fields] ERROR: ${msg}\n`);
+        return 1;
+    }
+};
+
+//* 직접 실행된 경우에만 CLI main을 수행한다. (test import 시에는 실행하지 않음)
+if (require.main === module) {
+    process.exit(main(process.argv.slice(2)));
+}

@@ -19,11 +19,7 @@
                 "src/types/*"
             ]
         },
-        "plugins": [
-            {
-                "transform": "ts-transformer-keys/transformer"
-            }
-        ],
+        "skipLibCheck": true,
         "declaration": true,
         "incremental": false
     },
