@@ -6,6 +6,7 @@
  * @date        2026-04-17 added field registry generator tests.
  * @copyright (C) lemoncloud.io 2026 - All Rights Reserved.
  */
+import { createHash } from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -186,8 +187,7 @@ describe('renderRegistry', () => {
         expect2(() => ({ match: genCanonical === runtimeCanonical })).toEqual({ match: true });
 
         //* checksum 재계산
-        const crypto = require('crypto');
-        const runtimeChecksum = crypto.createHash('sha256').update(runtimeCanonical).digest('hex').slice(0, 16);
+        const runtimeChecksum = createHash('sha256').update(runtimeCanonical).digest('hex').slice(0, 16);
 
         expect2(() => ({ checksumMatch: generatedChecksum === runtimeChecksum })).toEqual({ checksumMatch: true });
     });

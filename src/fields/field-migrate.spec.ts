@@ -248,10 +248,7 @@ describe('runMigrate — happy paths', () => {
                 compilerOptions: {
                     target: 'es2017',
                     module: 'commonjs',
-                    plugins: [
-                        { transform: 'ts-transformer-keys/transformer' },
-                        { transform: 'other-transformer' },
-                    ],
+                    plugins: [{ transform: 'ts-transformer-keys/transformer' }, { transform: 'other-transformer' }],
                 },
                 include: ['src/**/*'],
             }),

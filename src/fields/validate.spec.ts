@@ -6,6 +6,7 @@
  * @date        2026-04-21 added runtime validator tests.
  * @copyright (C) lemoncloud.io 2026 - All Rights Reserved.
  */
+import { createHash } from 'crypto';
 import { expect2 } from 'lemon-core';
 
 import { FieldRegistryMeta } from './types';
@@ -28,12 +29,11 @@ const makeFieldKeys = (): Record<string, () => string[]> => ({
 });
 
 const computeChecksum = (fieldKeys: Record<string, () => string[]>): string => {
-    const crypto = require('crypto');
     const canonical = Object.keys(fieldKeys)
         .sort()
         .map(k => JSON.stringify([k, fieldKeys[k]()]))
         .join('\n');
-    return crypto.createHash('sha256').update(canonical).digest('hex').slice(0, 16);
+    return createHash('sha256').update(canonical).digest('hex').slice(0, 16);
 };
 
 describe('validateFieldRegistry', () => {
@@ -56,7 +56,10 @@ describe('validateFieldRegistry', () => {
         });
 
         it('should fail META_MISSING when meta has wrong shape', () => {
-            const result = validateFieldRegistry({ fieldKeys: makeFieldKeys(), fieldRegistryMeta: { kind: 'unknown' } });
+            const result = validateFieldRegistry({
+                fieldKeys: makeFieldKeys(),
+                fieldRegistryMeta: { kind: 'unknown' },
+            });
 
             expect2(() => ({ ok: result.ok, codes: result.issues.map(i => i.code) })).toEqual({
                 ok: false,
@@ -97,7 +100,8 @@ describe('validateFieldRegistry', () => {
         it('should fail ENTRY_COUNT_MISMATCH when key count differs from meta.entryCount', () => {
             const fk = makeFieldKeys();
             //* entry 하나를 통째로 삭제한다 (key 개수 ≠ meta.entryCount=2)
-            const { alpha: _, ...withoutAlpha } = fk;
+            const { alpha, ...withoutAlpha } = fk;
+            void alpha;
             const result = validateFieldRegistry({ fieldKeys: withoutAlpha, fieldRegistryMeta: makeMeta() });
 
             expect2(() => ({ ok: result.ok, codes: result.issues.map(i => i.code) })).toEqual({
@@ -136,7 +140,9 @@ describe('validateFieldRegistry', () => {
         it('should fail ENTRY_EVAL_FAILED and not throw when entry function throws', () => {
             const throwing = {
                 ...makeFieldKeys(),
-                alpha: () => { throw new Error('corrupt entry'); },
+                alpha: () => {
+                    throw new Error('corrupt entry');
+                },
             };
             const result = validateFieldRegistry({ fieldKeys: throwing, fieldRegistryMeta: makeMeta() });
 
@@ -199,9 +205,7 @@ describe('validateFieldRegistry', () => {
 
 describe('assertFieldRegistry', () => {
     it('should not throw for a valid concrete registry', () => {
-        expect(() =>
-            assertFieldRegistry({ fieldKeys: makeFieldKeys(), fieldRegistryMeta: makeMeta() }),
-        ).not.toThrow();
+        expect(() => assertFieldRegistry({ fieldKeys: makeFieldKeys(), fieldRegistryMeta: makeMeta() })).not.toThrow();
     });
 
     it('should throw with all issue codes in the message', () => {

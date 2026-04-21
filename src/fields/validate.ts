@@ -20,7 +20,12 @@ import type {
     IssueCode,
 } from './types';
 
-export type { FieldRegistryMeta, FieldRegistryValidationIssue, FieldRegistryValidationResult, IssueCode } from './types';
+export type {
+    FieldRegistryMeta,
+    FieldRegistryValidationIssue,
+    FieldRegistryValidationResult,
+    IssueCode,
+} from './types';
 
 export interface ValidateInput {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -41,8 +46,7 @@ const isMeta = (v: unknown): v is FieldRegistryMeta =>
 const issue = (code: IssueCode, message: string, entryKey?: string): FieldRegistryValidationIssue =>
     entryKey !== undefined ? { code, message, entryKey } : { code, message };
 
-const sha256First16 = (input: string): string =>
-    crypto.createHash('sha256').update(input).digest('hex').slice(0, 16);
+const sha256First16 = (input: string): string => crypto.createHash('sha256').update(input).digest('hex').slice(0, 16);
 
 /**
  * live registry에서 checksum 입력용 canonical string을 만든다.
@@ -71,7 +75,11 @@ const canonicalFromLiveRegistry = (
 
         if (!Array.isArray(result) || !result.every(x => typeof x === 'string')) {
             issues.push(
-                issue('INVALID_FIELD_LIST', `entry "${key}" did not return string[], got: ${JSON.stringify(result)}`, key),
+                issue(
+                    'INVALID_FIELD_LIST',
+                    `entry "${key}" did not return string[], got: ${JSON.stringify(result)}`,
+                    key,
+                ),
             );
             continue;
         }
@@ -99,7 +107,12 @@ export const validateFieldRegistry = (input: ValidateInput): FieldRegistryValida
 
     // meta shape 확인
     if (!isMeta(input.fieldRegistryMeta)) {
-        issues.push(issue('META_MISSING', 'fieldRegistryMeta is missing or has invalid shape — run `lemon-fields gen` to regenerate'));
+        issues.push(
+            issue(
+                'META_MISSING',
+                'fieldRegistryMeta is missing or has invalid shape — run `lemon-fields gen` to regenerate',
+            ),
+        );
         return { ok: false, issues };
     }
 
@@ -113,7 +126,12 @@ export const validateFieldRegistry = (input: ValidateInput): FieldRegistryValida
 
     // bootstrap stub 확인
     if (meta.kind === 'bootstrap') {
-        issues.push(issue('BOOTSTRAP_STUB', 'registry is a bootstrap stub — run `lemon-fields gen` to generate a concrete registry'));
+        issues.push(
+            issue(
+                'BOOTSTRAP_STUB',
+                'registry is a bootstrap stub — run `lemon-fields gen` to generate a concrete registry',
+            ),
+        );
         return { ok: false, issues };
     }
 
@@ -129,7 +147,10 @@ export const validateFieldRegistry = (input: ValidateInput): FieldRegistryValida
     // entry count 확인 (meta.entryCount vs 실제 key 개수)
     if (keys.length !== meta.entryCount) {
         issues.push(
-            issue('ENTRY_COUNT_MISMATCH', `registry has ${keys.length} entries but meta.entryCount is ${meta.entryCount}`),
+            issue(
+                'ENTRY_COUNT_MISMATCH',
+                `registry has ${keys.length} entries but meta.entryCount is ${meta.entryCount}`,
+            ),
         );
     }
 
@@ -145,7 +166,10 @@ export const validateFieldRegistry = (input: ValidateInput): FieldRegistryValida
     const computedChecksum = sha256First16(canonical);
     if (computedChecksum !== meta.checksum) {
         issues.push(
-            issue('CHECKSUM_MISMATCH', `registry checksum mismatch — expected "${meta.checksum}", got "${computedChecksum}"`),
+            issue(
+                'CHECKSUM_MISMATCH',
+                `registry checksum mismatch — expected "${meta.checksum}", got "${computedChecksum}"`,
+            ),
         );
     }
 

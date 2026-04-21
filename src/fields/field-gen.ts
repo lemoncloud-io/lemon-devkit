@@ -41,8 +41,7 @@ export const canonicalEntries = (entries: RegistryEntry[]): string =>
         .map(e => JSON.stringify([e.name, e.fields]))
         .join('\n');
 
-const sha256First16 = (input: string): string =>
-    crypto.createHash('sha256').update(input).digest('hex').slice(0, 16);
+const sha256First16 = (input: string): string => crypto.createHash('sha256').update(input).digest('hex').slice(0, 16);
 
 /** bootstrap stub 파일 내용을 생성 */
 export const bootstrapStub = (): string => {
@@ -362,7 +361,11 @@ export const runGen = (opts: GenOptions): GenResult => {
                 skipped.push({ relPath: hit.relPath, typeArgText: hit.typeArgText, reason: hit.reason ?? 'unknown' });
                 continue;
             }
-            const prior = migratedByName.get(hit.name!);
+            if (!hit.name) {
+                skipped.push({ relPath: hit.relPath, typeArgText: hit.typeArgText, reason: 'missing-name' });
+                continue;
+            }
+            const prior = migratedByName.get(hit.name);
             //* 같은 key + 같은 fields는 중복 호출로 허용 가능.
             //* 같은 key + 다른 fields는 생성 결과가 모호하므로 실패 처리.
             if (prior && !sameFields(prior.fields, hit.fields)) {
@@ -374,8 +377,8 @@ export const runGen = (opts: GenOptions): GenResult => {
                 );
             }
             if (!prior) {
-                migratedByName.set(hit.name!, {
-                    name: hit.name!,
+                migratedByName.set(hit.name, {
+                    name: hit.name,
                     fields: hit.fields,
                     relPath: hit.relPath,
                     typeArgText: hit.typeArgText,
