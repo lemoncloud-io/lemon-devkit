@@ -4,7 +4,6 @@
     "collectCoverage": true,
     "globals": {
         "ts-jest": {
-            "compiler": "ttypescript",
             "tsconfig": "tsconfig.json"
         }
     },
