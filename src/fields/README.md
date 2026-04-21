@@ -468,29 +468,191 @@ npx lemon-fields migrate --update-tsconfig --report
 
 `lemon-devkit`은 TypeScript `>=4.7 <6` 범위를 허용하므로, 기존 project가 쓰던 TypeScript version을 가능하면 그대로 유지한다.
 
+## 어디서 무엇을 검사하나
+
+쉽게 말해, 검사는 3번 한다.
+
+| 단계 | 도구 | 무엇을 잡나 |
+|---|---|---|
+| Dev | `gen --report` | 생성 결과를 사람이 눈으로 확인 |
+| CI | `gen --check` | source는 바뀌었는데 `gen`을 안 돌린 상태 |
+| Runtime | `assertFieldRegistry` | 이미 생성된 registry 파일 손상/누락 |
+
+짧게 정리하면:
+
+- `gen --report`: 사람이 눈으로 확인
+- `gen --check`: CI가 `gen` 누락을 자동으로 차단
+- `assertFieldRegistry`: 실행 중에 generated file 손상 여부 확인
+
+## 앱 시작 시 registry 검사
+
+쉽게 말해, generated registry 파일이 안 깨졌는지 실행 초기에 한 번 확인하는 기능이다.
+
+여기서 "앱 시작"은 보통 아래를 뜻한다.
+
+- 일반 Node 서버: `app.listen()` 전
+- Lambda: cold start 시점, 즉 `handler` 바깥
+
+> **처음 켤 때**: `lemon-fields gen`을 한 번 다시 실행해야 한다. 예전 형식 registry에는 `fieldRegistryMeta`가 없어 `META_MISSING`이 날 수 있다.
+
+`assertFieldRegistry`는 위 초기화 구간에서 한 번만 호출한다.
+
+```ts
+import { fieldKeys, fieldRegistryMeta } from './generated/field-registry';
+import { assertFieldRegistry } from 'lemon-devkit';
+
+// 서버 시작 전 / Lambda cold start 시점에 1번
+assertFieldRegistry({ fieldKeys, fieldRegistryMeta });
+```
+
+`fieldRegistryMeta` 안의 핵심 값은 아래 3개다.
+
+- `kind`: 이 파일이 임시 stub인지, 실제 생성 완료본인지
+- `entryCount`: `fieldKeys` 안에 entry가 몇 개인지
+- `checksum`: entry 이름과 field 목록 내용이 안 바뀌었는지
+
+이 검사가 잡는 것:
+
+- bootstrap stub을 그대로 commit한 경우
+- `fieldRegistryMeta`가 없거나 깨진 경우
+- generated file을 손으로 수정한 경우
+- entry 함수가 깨진 경우
+
+이 검사가 못 잡는 것은 하나다:
+
+- source를 바꿨는데 `lemon-fields gen`을 다시 안 돌린 경우
+
+이 경우는 CI의 `gen --check`가 잡는다.
+
+예시 에러:
+
+```txt
+field registry validation failed:
+  [CHECKSUM_MISMATCH] registry checksum does not match meta.checksum
+```
+
+### Runtime 오류 코드
+
+자주 보게 될 코드는 아래 4개다.
+
+| Code | 의미 |
+|---|---|
+| `META_MISSING` | `fieldRegistryMeta`가 없거나 shape가 잘못됨 |
+| `BOOTSTRAP_STUB` | 아직 임시 stub 파일 상태라 `gen`이 더 필요함 |
+| `ENTRY_COUNT_MISMATCH` | entry 개수가 맞지 않음 |
+| `CHECKSUM_MISMATCH` | entry 내용이 손상되었거나 수동 수정됨 |
+
+그 외 코드:
+
+- `UNSUPPORTED_SCHEMA`: registry 형식 버전이 맞지 않음
+- `NON_FUNCTION_ENTRY`: entry가 함수가 아님
+- `ENTRY_EVAL_FAILED`: entry 함수 실행 중 에러
+- `INVALID_FIELD_LIST`: entry가 `string[]`를 반환하지 않음
+- `EMPTY_CONCRETE_REGISTRY`: concrete registry인데 entry가 0개
+
+참고:
+
+- field 하나만 손으로 지우면 보통 `CHECKSUM_MISMATCH`
+- entry 하나를 통째로 지우면 `ENTRY_COUNT_MISMATCH`와 `CHECKSUM_MISMATCH`가 같이 날 수 있다
+
+문제 목록만 받고 싶으면 `validateFieldRegistry()`를 쓰고, 문제 있으면 바로 실패시키고 싶으면 `assertFieldRegistry()`를 쓴다.
+
+```ts
+import { validateFieldRegistry } from 'lemon-devkit';
+
+const result = validateFieldRegistry({ fieldKeys, fieldRegistryMeta });
+
+if (!result.ok) {
+    console.log(result.issues);
+}
+```
+
+## 왜 예전에는 `ttsc`가 필요했나
+
+예전 방식은 build할 때 특별한 변환기가 필요했다.
+
+```ts
+const FIELDS = keys<User>();
+```
+
+이 코드는 build 중에 transformer가 `keys<User>()`를 실제 field 목록으로 바꿔줘야 한다. 그래서 plain `tsc`만으로는 부족했고 `ttsc` 같은 도구가 필요했다.
+
+지금 방식은 `gen`이 결과를 미리 generated file로 만들어 둔다.
+
+```ts
+const FIELDS = fieldKeys.user<User>();
+```
+
+쉽게 말해:
+
+- 예전: build할 때 field 목록을 계산
+- 지금: `gen` 할 때 한 번 계산해서 파일로 저장
+
+그래서 migration이 끝나면 runtime과 build에서는 plain `tsc`로 충분하다.
+
+### Migration 단계별 상태
+
+| 단계 | 코드 모습 | 추가 도구 | 한 줄 설명 |
+|---|---|---|---|
+| Before migration | `keys<User>()` | `ttsc` 필요 | 아직 예전 방식 |
+| During migration | `keys<User>()` + `fieldKeys.user<User>()` 혼용 | `ttsc` 유지 | 옮기는 중 |
+| After migration | `fieldKeys.user<User>()` + generated registry | 불필요 | plain `tsc`만 쓰면 됨 |
+
+### 언제 `ttsc`를 제거해도 되나
+
+다음 4개가 모두 맞으면 `ttsc`·`ttypescript`·`ts-transformer-keys/transformer`를 제거해도 된다.
+
+- 모든 `keys<T>()` 호출이 `fieldKeys.<name><T>()`로 바뀌었다
+- `lemon-fields gen`으로 concrete registry를 commit했다
+- `lemon-fields migrate --update-tsconfig`로 transformer plugin을 tsconfig에서 제거했다
+- 프로젝트에 다른 custom transformer가 남아 있지 않다
+
+예를 들어, repo 전체에서 `keys<` 검색 결과가 더 이상 없고 `gen` 결과도 커밋했다면 제거할 준비가 된 것이다.
+
+## 자주 묻는 질문
+
+**`compilerOptions.plugins`만 넣으면 왜 안 되나?**
+
+`tsc`는 여기 있는 `plugins`를 IDE용으로만 보고, 실제 build 때 transformer를 실행하지 않는다. 그래서 `keys<T>()`가 변환되지 않아 보통 빈 배열이 남는다.
+
+예:
+
+```ts
+const FIELDS = keys<User>(); // 기대: ['id', 'name'], 실제: []
+```
+
+**`--update-tsconfig` 후에도 `ttypescript`가 필요한 경우는?**
+
+다른 custom transformer를 아직 쓰고 있으면 필요할 수 있다.
+
+예: 같은 tsconfig에서 `ts-nameof`를 계속 쓰는 프로젝트
+
+**`--allow-legacy`는 왜 임시 옵션인가?**
+
+`--allow-legacy`는 migration 중에만 잠깐 쓰는 옵션이다. 이 상태에서는 이름이 임시로 만들어져 registry가 흔들릴 수 있다.
+
+예: 같은 field 목록인데 호출 위치에 따라 다른 key 이름이 생길 수 있다.
+
 ## 검증된 동작
 
-테스트에서 확인한 내용:
+아래 핵심 동작은 자동 테스트로 확인했다.
 
-- `lemon-fields --help` 출력
-- 알 수 없는 flag 또는 값이 빠진 flag의 exit code `1`
-- `migrate --report` 출력 형식
-- `migrate --dry-run --diff --update-tsconfig`
-- `gen --report` 출력 형식
-- `gen --check` drift 감지와 exit code
-- `--paths`가 scan 대상만 줄이고 imported model type context는 유지하는 동작
-- `writeRegistry()`가 parent directory를 만들고 파일을 쓰는 동작
-- npm publish 산출물에 이 README가 포함되는지 여부
-- generated registry 파일 자체를 다시 scan하지 않는 동작
-- 같은 registry key가 다른 field set을 가리킬 때 실패하는 동작
-- property가 0개인 타입을 skipped 대신 `[]`로 materialise 하는 동작
-- `Model` 같은 generic type 이름에 path context를 붙이는 이름 생성 규칙
-- path context가 이미 `model`로 끝나면 `mockModelModel`처럼 중복 suffix를 만들지 않는 규칙
+- CLI 기본 동작: `--help`, 잘못된 옵션 처리
+- migration 동작: `migrate --report`, `--dry-run`, `--diff`, `--update-tsconfig`
+- generation 동작: `gen --report`, `gen --check`, output directory 생성
+- scan 규칙: generated registry 재스캔 방지, `--paths`는 scan 대상만 줄임
+- 이름 규칙: 이름 충돌 감지, `ModelModel` 같은 중복 suffix 방지
+- 빈 타입 처리: property가 0개인 타입은 실패 대신 `[]` 생성
+- meta/validation: `fieldRegistryMeta`, checksum, bootstrap meta 생성
+- runtime validator: `assertFieldRegistry`와 `validateFieldRegistry`의 오류 검출
 
 ## 내부 파일 구조
 
-- `types.ts`: `GenOptions`, `GenResult`, `MigrateOptions`, `MigrateResult` 등 public contract
-- `field-derive-name.ts`: legacy 호출에서 안정적인 registry 이름 생성
-- `field-migrate.ts`: `keys<T>()`를 `fieldKeys.<name><T>()`로 rewrite
-- `field-gen.ts`: migrated 호출을 스캔하고 concrete registry 생성
-- `../bin/lemon-fields.ts`: CLI entry
+어느 파일을 봐야 할지 빠르게 찾고 싶다면 아래만 보면 된다.
+
+- `types.ts`: 공통 타입 모음. 옵션/반환값 shape가 궁금할 때
+- `validate.ts`: runtime validator. `META_MISSING` 같은 오류 흐름을 보고 싶을 때
+- `field-derive-name.ts`: registry key 이름 규칙. 자동 이름이 왜 그렇게 붙었는지 볼 때
+- `field-migrate.ts`: `keys<T>()`를 `fieldKeys.<name><T>()`로 바꾸는 로직
+- `field-gen.ts`: scan 후 concrete registry를 만드는 로직
+- `../bin/lemon-fields.ts`: CLI 시작점. `gen`, `migrate`, `--check`, `--report` 처리를 볼 때

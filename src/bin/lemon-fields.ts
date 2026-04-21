@@ -137,9 +137,12 @@ const genReportLine = (entry: ReturnType<typeof runGen>['entries'][number]): str
     )}${legacy}\n`;
 };
 
-const writeGenReport = (entries: ReturnType<typeof runGen>['entries']): void => {
+const writeGenReport = (entries: ReturnType<typeof runGen>['entries'], content: string): void => {
     const label = `${entries.length} generated entr${entries.length === 1 ? 'y' : 'ies'}`;
-    process.stdout.write(`[lemon-fields] report — ${label}:\n`);
+    // fieldRegistryMeta checksum 앞 8자를 report에 포함해 dev가 CI/runtime 값과 비교할 수 있도록 함
+    const checksumMatch = content.match(/"checksum":\s*"([0-9a-f]{16})"/);
+    const checksumHint = checksumMatch ? `  checksum: ${checksumMatch[1].slice(0, 8)}…` : '';
+    process.stdout.write(`[lemon-fields] report — ${label}${checksumHint}:\n`);
     for (const entry of [...entries].sort((a, b) => a.name.localeCompare(b.name))) {
         process.stdout.write(genReportLine(entry));
     }
@@ -173,7 +176,7 @@ const runGenCmd = (flags: ParsedArgs['flags']): number => {
     process.stdout.write(
         `[lemon-fields] gen — ${res.entries.length} entries, ${res.changed ? 'wrote' : 'no change to'} ${common.out}\n`,
     );
-    if (flags['report']) writeGenReport(res.entries);
+    if (flags['report']) writeGenReport(res.entries, res.content);
     if (res.skipped.length > 0) {
         process.stderr.write(`[lemon-fields] skipped ${res.skipped.length} site(s):\n`);
         for (const s of res.skipped) process.stderr.write(`  - ${s.relPath} :: ${s.typeArgText} (${s.reason})\n`);

@@ -206,7 +206,8 @@ describe('lemon-fields CLI', () => {
         expect(res.code).toBe(0);
         expect(res.stderr).toBe('');
         expect(res.stdout).toContain('[lemon-fields] gen — 1 entries, wrote src/generated/field-registry.ts');
-        expect(res.stdout).toContain('[lemon-fields] report — 1 generated entry:');
+        expect(res.stdout).toContain('[lemon-fields] report — 1 generated entry');
+        expect(res.stdout).toMatch(/checksum: [0-9a-f]{8}…/);
         expect(res.stdout).toContain('catalogModel  src/a.ts#CatalogModel  fields(2): id, public');
     });
 

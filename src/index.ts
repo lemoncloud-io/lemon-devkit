@@ -12,3 +12,4 @@
  */
 export * from './environ';
 export * from './tools';
+export * from './fields/validate';

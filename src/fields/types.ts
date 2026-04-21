@@ -134,6 +134,54 @@ export interface MigrateOptions {
 }
 
 /**
+ * type: `FieldRegistryMeta`
+ * - generated registry 파일에 함께 내보내는 메타데이터.
+ */
+export interface FieldRegistryMeta {
+    /** `'concrete'`: 실제 entry가 있는 registry. `'bootstrap'`: 빈 stub. */
+    kind: 'concrete' | 'bootstrap';
+    /** 현재 값 1. 의미 변경 시 bump. */
+    schemaVersion: 1;
+    /** registry entry 개수. */
+    entryCount: number;
+    /** entry name+fields의 canonical JSON sha256 앞 16자. bootstrap은 빈 문자열. */
+    checksum: string;
+    generatedBy: 'lemon-fields';
+}
+
+/** validate 함수가 반환하는 issue code. */
+export type IssueCode =
+    | 'META_MISSING'
+    | 'UNSUPPORTED_SCHEMA'
+    | 'BOOTSTRAP_STUB'
+    | 'ENTRY_COUNT_MISMATCH'
+    | 'CHECKSUM_MISMATCH'
+    | 'NON_FUNCTION_ENTRY'
+    | 'ENTRY_EVAL_FAILED'
+    | 'INVALID_FIELD_LIST'
+    | 'EMPTY_CONCRETE_REGISTRY';
+
+/**
+ * type: `FieldRegistryValidationIssue`
+ * - `validateFieldRegistry()`가 반환하는 개별 검증 issue.
+ */
+export interface FieldRegistryValidationIssue {
+    code: IssueCode;
+    message: string;
+    /** 특정 entry key에 귀속되는 issue인 경우. */
+    entryKey?: string;
+}
+
+/**
+ * type: `FieldRegistryValidationResult`
+ * - `validateFieldRegistry()` 반환값.
+ */
+export interface FieldRegistryValidationResult {
+    ok: boolean;
+    issues: FieldRegistryValidationIssue[];
+}
+
+/**
  * type: `MigrateResult`
  * - `runMigrate()` 실행 결과.
  */
