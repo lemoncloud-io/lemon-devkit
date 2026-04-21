@@ -294,20 +294,27 @@ describe('lemon-fields CLI', () => {
         expect(res.stderr).toContain('legacy leftovers (--allow-legacy): 1');
     });
 
-    //* skipped output
-    it('should pass skipped stderr output for gen and migrate', () => {
+    //* empty property set parity + migrate skipped output
+    it('should materialise empty property sets for gen and keep migrate skipped output', () => {
         const genRoot = makeTmpProject({
             'tsconfig.json': TSCONFIG,
             'src/generated/field-registry.ts': bootstrapStub(),
             'src/a.ts': `
                 import { fieldKeys } from './generated/field-registry';
-                export const F = fieldKeys.empty<{}>();
+                interface A { a: string }
+                interface B { b: string }
+                export const EMPTY = fieldKeys.empty<{}>();
+                export const UNION = fieldKeys.union<A | B>();
             `,
         });
-        const gen = instance(genRoot, ['gen', '--allow-empty']);
+        const gen = instance(genRoot, ['gen']);
+        const registry = fs.readFileSync(path.join(genRoot, 'src/generated/field-registry.ts'), 'utf8');
+
         expect(gen.code).toBe(0);
-        expect(gen.stderr).toContain('[lemon-fields] skipped 1 site(s):');
-        expect(gen.stderr).toContain('src/a.ts :: {} (type resolved to no properties)');
+        expect(gen.stderr).toBe('');
+        expect(registry).toContain(`empty: <T extends object>() =>`);
+        expect(registry).toContain(`[] as Array<Extract<keyof T, string>>`);
+        expect(registry).toContain(`union: <T extends object>() =>`);
 
         const migRoot = makeTmpProject({
             'tsconfig.json': TSCONFIG,

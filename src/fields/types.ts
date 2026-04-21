@@ -102,7 +102,7 @@ export interface GenResult {
     existing?: string;
     /** `content !== existing` 이면 true */
     changed: boolean;
-    /** 타입 해석에 실패한 호출 위치 */
+    /** 타입 property 이름을 materialise 하지 못한 호출 위치 */
     skipped: FieldSiteSkip[];
     /** 스캔 중 발견한 legacy `keys<T>()` 호출 위치 */
     legacyLeftovers: Array<Omit<FieldSiteSkip, 'reason'>>;

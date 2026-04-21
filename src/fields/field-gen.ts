@@ -147,7 +147,7 @@ interface SiteHit {
     name?: string;
     /** 호출 위치의 generic argument 원문 */
     typeArgText: string;
-    /** 해석된 field 이름 목록. null이면 TypeScript checker가 property를 노출하지 못한 경우 */
+    /** 해석된 field 이름 목록. null이면 TypeScript checker가 property 이름을 materialise 하지 못한 경우 */
     fields: string[] | null;
     /** 프로젝트 기준 상대 경로. `/` 로 normalize 된 값 */
     relPath: string;
@@ -195,7 +195,7 @@ const scanFile = (sf: SourceFile, cwd: string, outAbs: string, outputRelPath: st
                     fields,
                     relPath,
                     call,
-                    reason: fields === null ? 'type resolved to no properties' : undefined,
+                    reason: fields === null ? 'type checker failed to materialise property names' : undefined,
                 });
                 continue;
             }
@@ -212,7 +212,7 @@ const scanFile = (sf: SourceFile, cwd: string, outAbs: string, outputRelPath: st
                 relPath,
                 call,
                 context,
-                reason: fields === null ? 'type resolved to no properties' : undefined,
+                reason: fields === null ? 'type checker failed to materialise property names' : undefined,
             });
         }
     }
@@ -225,15 +225,16 @@ const scanFile = (sf: SourceFile, cwd: string, outAbs: string, outputRelPath: st
  *
  * ts-morph가 TypeScript checker에 위임하므로, imported interface/intersection/
  * declared type 모두 consumer project의 `tsconfig` 기준으로 해석된다.
+ * property가 0개인 타입도 `ts-transformer-keys`와 맞추기 위해 빈 배열로 유지한다.
  */
 const resolveFields = (typeArgNode: Node): string[] | null => {
     try {
         const t = (typeArgNode as any).getType?.();
         if (!t) return null;
         const props = t.getProperties?.();
-        if (!props || props.length === 0) return null;
+        if (!props) return null;
         const names = props.map((p: any) => p.getName?.()).filter((x: any): x is string => typeof x === 'string');
-        return names.length === 0 ? null : names;
+        return names.length === props.length ? names : null;
     } catch {
         return null;
     }
@@ -381,6 +382,11 @@ export const runGen = (opts: GenOptions): GenResult => {
             });
             legacyLeftovers.push({ relPath: hit.relPath, typeArgText: hit.typeArgText });
         }
+    }
+
+    if (skipped.length > 0) {
+        const lines = skipped.map(s => `  - ${s.relPath} :: ${s.typeArgText} (${s.reason})`).join('\n');
+        throw new Error(`failed to materialise ${skipped.length} call site(s):\n${lines}`);
     }
 
     const entries = Array.from(migratedByName.values());

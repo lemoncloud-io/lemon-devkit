@@ -371,6 +371,47 @@ import { fieldKeys } from './generated/field-registry';
 export const USER_FIELDS = fieldKeys.userModel<UserModel>();
 ```
 
+### property가 0개인 타입도 `[]`로 생성한다
+
+`ts-transformer-keys`와 맞추기 위해 property가 0개인 타입은 skipped로 버리지 않고 빈 배열로 materialise 한다.
+
+```ts
+export const EMPTY = fieldKeys.empty<{}>();
+export const UNION = fieldKeys.union<A | B>();
+export const RECORD = fieldKeys.record<Record<string, unknown>>();
+```
+
+위와 같은 호출은 모두 generated registry에 `[]`로 기록된다.
+
+실패로 보는 경우는 property가 0개인 상황이 아니라, TypeScript checker가 property 이름을 안정적으로 materialise 하지 못한 경우이다.
+
+### 생성 실패/누락 케이스
+
+| 케이스 이름 | 케이스 간단 설명 | error / throw 여부 | 예시 코드 |
+| --- | --- | --- | --- |
+| legacy leftover | 아직 `keys<T>()`가 남아 있으면 `gen`이 실패한다. 먼저 `migrate`를 돌린다. | `기본값: throw`<br/>`--allow-legacy: 허용` | `const FIELDS = keys<User>();` |
+| divergent registry key | 같은 `fieldKeys.<name>`이 서로 다른 field set을 가리키면 실패한다. 이름을 분리해야 한다. | `throw` | `fieldKeys.userModel<User>();`<br/>`fieldKeys.userModel<UserSummary>();` |
+| materialise failure | checker가 타입 property를 확정하지 못하면 실패한다. 타입을 더 구체적으로 만든다. | `throw` | `fieldKeys.userModel<T>();` |
+| empty scan | scan 범위에 callsite가 하나도 없으면 실패한다. `--paths`와 `tsconfig`를 확인한다. | `기본값: throw`<br/>`--allow-empty: 허용` | `npx lemon-fields gen --paths 'src/user/**/*.ts'` |
+| partial generation by `--paths` | 실패는 아니지만 일부 key만 생성된다. 최종 생성/CI에는 쓰지 않는다. | `throw 없음` | `npx lemon-fields gen --paths 'src/user/**/*.ts'` |
+| scan blind spot | alias/wrapper 호출은 누락될 수 있다. 직접 호출만 안전하다. | `보통 throw 없음`<br/>`전체 누락 시 empty scan throw 가능` | `const fk = fieldKeys;`<br/>`fk.userModel<User>();` |
+
+직접 호출만 안정적으로 scan 된다.
+
+```ts
+import { fieldKeys } from './generated/field-registry';
+
+export const USER_FIELDS = fieldKeys.userModel<UserModel>();
+```
+
+다음 케이스들은 실패가 아니라 정상 동작이며 `[]`로 생성된다.
+
+| 케이스 이름 | 케이스 간단 설명 | error / throw 여부 | 예시 코드 |
+| --- | --- | --- | --- |
+| empty object | property가 0개인 타입은 실패가 아니라 `[]`로 생성된다. | `throw 없음` | `fieldKeys.empty<{}>()` |
+| union | 결과 property가 0개면 실패가 아니라 `[]`로 생성된다. | `throw 없음` | `fieldKeys.union<A | B>()` |
+| record | key가 동적인 record도 실패가 아니라 `[]`로 생성된다. | `throw 없음` | `fieldKeys.record<Record<string, unknown>>()` |
+
 ### `--paths`는 scan 대상만 줄인다
 
 `--paths`는 “어느 파일에서 `fieldKeys.<name>()` 호출을 찾을지”만 제한한다.
@@ -442,6 +483,7 @@ npx lemon-fields migrate --update-tsconfig --report
 - npm publish 산출물에 이 README가 포함되는지 여부
 - generated registry 파일 자체를 다시 scan하지 않는 동작
 - 같은 registry key가 다른 field set을 가리킬 때 실패하는 동작
+- property가 0개인 타입을 skipped 대신 `[]`로 materialise 하는 동작
 - `Model` 같은 generic type 이름에 path context를 붙이는 이름 생성 규칙
 - path context가 이미 `model`로 끝나면 `mockModelModel`처럼 중복 suffix를 만들지 않는 규칙
 

@@ -10,17 +10,9 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
-import { GenOptions, runGen, bootstrapStub, renderRegistry, writeRegistry } from './field-gen';
+import { expect2, GETERR } from 'lemon-core';
 
-const makeTmpProject = (files: Record<string, string>): string => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'lemon-fields-'));
-    for (const [rel, content] of Object.entries(files)) {
-        const abs = path.join(root, rel);
-        fs.mkdirSync(path.dirname(abs), { recursive: true });
-        fs.writeFileSync(abs, content, 'utf8');
-    }
-    return root;
-};
+import { GenOptions, bootstrapStub, renderRegistry, runGen, writeRegistry } from './field-gen';
 
 const TSCONFIG = JSON.stringify({
     compilerOptions: {
@@ -36,6 +28,26 @@ const TSCONFIG = JSON.stringify({
     exclude: ['node_modules', '**/*.spec.ts'],
 });
 
+const TS_TRANSFORMER_KEYS_STUB: Record<string, string> = {
+    'node_modules/ts-transformer-keys/package.json': JSON.stringify({
+        name: 'ts-transformer-keys',
+        main: 'index.js',
+    }),
+    'node_modules/ts-transformer-keys/index.js': `exports.keys = () => [];`,
+    'node_modules/ts-transformer-keys/index.d.ts': `export function keys<T>(): Array<Extract<keyof T, string>>;`,
+};
+
+//* temp fixture project를 파일 단위로 빠르게 조립한다.
+const makeTmpProject = (files: Record<string, string>): string => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'lemon-fields-'));
+    for (const [rel, content] of Object.entries(files)) {
+        const abs = path.join(root, rel);
+        fs.mkdirSync(path.dirname(abs), { recursive: true });
+        fs.writeFileSync(abs, content, 'utf8');
+    }
+    return root;
+};
+
 const baseOpts = (root: string, over: Partial<GenOptions> = {}): GenOptions => ({
     tsconfig: path.join(root, 'tsconfig.json'),
     out: 'src/generated/field-registry.ts',
@@ -46,8 +58,66 @@ const baseOpts = (root: string, over: Partial<GenOptions> = {}): GenOptions => (
     ...over,
 });
 
+interface FixtureOptions {
+    withLegacyKeys?: boolean;
+    withRegistry?: boolean;
+    gen?: Partial<GenOptions>;
+}
+
+//* runGen 테스트용 기본 fixture.
+//* - registry stub, legacy keys stub 여부를 옵션으로 토글한다.
+const instance = (files: Record<string, string>, options: FixtureOptions = {}) => {
+    const root = makeTmpProject({
+        'tsconfig.json': TSCONFIG,
+        ...(options.withRegistry === false ? {} : { 'src/generated/field-registry.ts': bootstrapStub() }),
+        ...(options.withLegacyKeys ? TS_TRANSFORMER_KEYS_STUB : {}),
+        ...files,
+    });
+
+    const run = (over: Partial<GenOptions> = {}) => runGen(baseOpts(root, { ...(options.gen ?? {}), ...over }));
+    const runErr = (over: Partial<GenOptions> = {}) => {
+        try {
+            run(over);
+            return '';
+        } catch (e) {
+            return GETERR(e);
+        }
+    };
+
+    return { root, run, runErr };
+};
+
+//* 결과를 한눈에 비교하기 위한 summary projection.
+const entryNames = (res: ReturnType<typeof runGen>): string[] => res.entries.map(e => e.name).sort();
+const fieldMap = (res: ReturnType<typeof runGen>): Record<string, string[]> =>
+    Object.fromEntries(
+        [...res.entries].sort((a, b) => a.name.localeCompare(b.name)).map(({ name, fields }) => [name, [...fields]]),
+    );
+const legacyTypeMap = (res: ReturnType<typeof runGen>): Record<string, { fields: string[]; legacy: boolean }> =>
+    Object.fromEntries(
+        [...res.entries]
+            .sort((a, b) => a.typeArgText.localeCompare(b.typeArgText))
+            .map(({ typeArgText, fields, legacy }) => [typeArgText, { fields: [...fields], legacy }]),
+    );
+const renderView = (out: string): string[] =>
+    out
+        .split('\n')
+        .filter(
+            line =>
+                line.includes('AUTO-GENERATED') ||
+                line.includes('// source:') ||
+                line.includes(': <T extends object>() =>') ||
+                line.includes('as Array<Extract<keyof T, string>>') ||
+                line === '} as const;',
+        );
+const isBootstrapStub = (out: string): boolean => out.includes('export const fieldKeys = {} as Record<');
+
+const EMPTY_SCAN_ERROR =
+    'no `fieldKeys.<name><T>()` call sites found. If this is expected, pass `--allow-empty`; otherwise check `--include-spec` and `--paths`.';
+
 describe('renderRegistry', () => {
-    it('emits expected shape with header + sorted entries', () => {
+    it('should pass registry rendering with header and sorted entries', () => {
+        //* full string 전체를 보는 대신, 핵심 line만 남겨 결과 shape를 바로 읽게 만든다.
         const out = renderRegistry([
             { name: 'userModel', fields: ['id', 'name'], relPath: 'src/a.ts', typeArgText: 'UserModel', legacy: false },
             {
@@ -58,19 +128,33 @@ describe('renderRegistry', () => {
                 legacy: false,
             },
         ]);
-        expect(out).toContain('AUTO-GENERATED');
-        //* registry key 기준 정렬: adminModel이 userModel보다 앞에 와야 함.
-        expect(out.indexOf('adminModel')).toBeLessThan(out.indexOf('userModel'));
-        expect(out).toContain(`["id", "role"] as Array<Extract<keyof T, string>>`);
-        expect(out).toContain(`} as const;`);
+
+        expect2(() => renderView(out)).toEqual([
+            '// AUTO-GENERATED by lemon-devkit `lemon-fields` — do not edit manually.',
+            '    // source: src/b.ts#AdminModel',
+            '    adminModel: <T extends object>() =>',
+            '        ["id", "role"] as Array<Extract<keyof T, string>>,',
+            '    // source: src/a.ts#UserModel',
+            '    userModel: <T extends object>() =>',
+            '        ["id", "name"] as Array<Extract<keyof T, string>>,',
+            '} as const;',
+        ]);
     });
 });
 
 describe('bootstrapStub', () => {
-    it('produces a permissively typed empty registry', () => {
+    it('should pass bootstrap stub typing', () => {
         const out = bootstrapStub();
-        expect(out).toContain('export const fieldKeys = {} as Record<');
-        expect(out).toContain('<T extends object>() => Array<Extract<keyof T, string>>');
+
+        //* bootstrap stub은 migration 직후 compile을 위한 최소 shape만 보장하면 된다.
+        expect2(() => out.trim().split('\n')).toEqual([
+            '// AUTO-GENERATED by lemon-devkit `lemon-fields` — do not edit manually.',
+            '// Regenerate: lemon-fields gen',
+            'export const fieldKeys = {} as Record<',
+            '    string,',
+            '    <T extends object>() => Array<Extract<keyof T, string>>',
+            '>;',
+        ]);
     });
 });
 
@@ -81,325 +165,420 @@ describe('writeRegistry', () => {
 
         writeRegistry(out, 'export const fieldKeys = {} as const;\n');
 
-        expect(fs.existsSync(out)).toBe(true);
-        expect(fs.readFileSync(out, 'utf8')).toBe('export const fieldKeys = {} as const;\n');
+        expect2(() => ({ exists: fs.existsSync(out), content: fs.readFileSync(out, 'utf8') })).toEqual({
+            exists: true,
+            content: 'export const fieldKeys = {} as const;\n',
+        });
     });
 });
 
-describe('runGen — happy paths', () => {
-    it('extracts fields from a simple migrated call site', () => {
-        const root = makeTmpProject({
-            'tsconfig.json': TSCONFIG,
-            'src/generated/field-registry.ts': bootstrapStub(),
-            'src/model.ts': `
-                export interface UserModel { id: string; name: string; age: number }
-            `,
-            'src/index.ts': `
-                import { fieldKeys } from './generated/field-registry';
-                import { UserModel } from './model';
-                export const F = fieldKeys.userModel<UserModel>();
-            `,
+describe('runGen', () => {
+    //* 정상 생성 케이스.
+    describe('basic generation', () => {
+        it('should pass a simple migrated call site', () => {
+            const fx = instance({
+                'src/model.ts': `export interface UserModel { id: string; name: string; age: number }`,
+                'src/index.ts': `
+                    import { fieldKeys } from './generated/field-registry';
+                    import { UserModel } from './model';
+                    export const FIELDS = fieldKeys.userModel<UserModel>();
+                `,
+            });
+
+            const res = fx.run();
+
+            expect2(() => ({ changed: res.changed, entries: res.entries }), 'changed,entries').toEqual({
+                changed: true,
+                entries: [
+                    {
+                        name: 'userModel',
+                        fields: ['id', 'name', 'age'],
+                        relPath: 'src/index.ts',
+                        typeArgText: 'UserModel',
+                        legacy: false,
+                    },
+                ],
+            });
         });
 
-        const res = runGen(baseOpts(root));
-        expect(res.entries).toHaveLength(1);
-        expect(res.entries[0].name).toBe('userModel');
-        expect(res.entries[0].fields).toEqual(['id', 'name', 'age']);
-        expect(res.changed).toBe(true);
+        it('should pass intersection type resolution across imported interfaces', () => {
+            const fx = instance({
+                'src/model.ts': `
+                    export interface A { a: string; shared: number }
+                    export interface B { b: string; shared: number }
+                    export interface C { c: string }
+                `,
+                'src/index.ts': `
+                    import { fieldKeys } from './generated/field-registry';
+                    import { A, B, C } from './model';
+                    export const FIELDS = fieldKeys.abcMix<A & B & C>();
+                `,
+            });
+
+            const res = fx.run();
+
+            expect2(() => fieldMap(res)).toEqual({ abcMix: ['a', 'shared', 'b', 'c'] });
+        });
+
+        it('should pass distinct registry names for the same interface', () => {
+            const fx = instance({
+                'src/model.ts': `export interface Model { id: string; x: number }`,
+                'src/a.ts': `
+                    import { fieldKeys } from './generated/field-registry';
+                    import { Model } from './model';
+                    export const A = fieldKeys.alpha<Model>();
+                `,
+                'src/b.ts': `
+                    import { fieldKeys } from './generated/field-registry';
+                    import { Model } from './model';
+                    export const B = fieldKeys.bravo<Model>();
+                `,
+            });
+
+            const res = fx.run();
+
+            expect2(() => fieldMap(res)).toEqual({
+                alpha: ['id', 'x'],
+                bravo: ['id', 'x'],
+            });
+        });
+
+        it('should pass identical duplicate registry names when the field set is the same', () => {
+            const fx = instance({
+                'src/model.ts': `export interface Model { id: string; x: number }`,
+                'src/a.ts': `
+                    import { fieldKeys } from './generated/field-registry';
+                    import { Model } from './model';
+                    export const A = fieldKeys.same<Model>();
+                `,
+                'src/b.ts': `
+                    import { fieldKeys } from './generated/field-registry';
+                    import { Model } from './model';
+                    export const B = fieldKeys.same<Model>();
+                `,
+            });
+
+            const res = fx.run();
+
+            expect2(() => fieldMap(res)).toEqual({ same: ['id', 'x'] });
+        });
+
+        it('should pass aliased registry imports', () => {
+            const fx = instance({
+                'src/model.ts': `export interface Model { id: string }`,
+                'src/index.ts': `
+                    import { fieldKeys as lemonFieldKeys } from './generated/field-registry';
+                    import { Model } from './model';
+                    export const FIELDS = lemonFieldKeys.modelA<Model>();
+                `,
+            });
+
+            const res = fx.run();
+
+            expect2(() => entryNames(res)).toEqual(['modelA']);
+        });
+
+        it('should pass generated registry self-skip', () => {
+            const fx = instance({
+                'src/generated/field-registry.ts': `
+                    export const fieldKeys = {
+                        stale: <T extends object>() => ['a', 'b'] as Array<Extract<keyof T, string>>,
+                    } as const;
+                `,
+                'src/model.ts': `export interface Model { id: string }`,
+                'src/index.ts': `
+                    import { fieldKeys } from './generated/field-registry';
+                    import { Model } from './model';
+                    export const FIELDS = fieldKeys.modelB<Model>();
+                `,
+            });
+
+            const res = fx.run();
+
+            expect2(() => entryNames(res)).toEqual(['modelB']);
+        });
+
+        it('should pass spec-file inclusion when includeSpec=true', () => {
+            const fx = instance({
+                'src/model.ts': `export interface Model { id: string }`,
+                'src/a.spec.ts': `
+                    import { fieldKeys } from './generated/field-registry';
+                    import { Model } from './model';
+                    describe('scan', () => {
+                        it('should pass inline spec call', () => fieldKeys.specModel<Model>());
+                    });
+                `,
+            });
+
+            const res = fx.run();
+
+            expect2(() => entryNames(res)).toEqual(['specModel']);
+        });
+
+        it('should pass spec-file exclusion when includeSpec=false', () => {
+            const fx = instance({
+                'src/model.ts': `export interface Model { id: string }`,
+                'src/a.spec.ts': `
+                    import { fieldKeys } from './generated/field-registry';
+                    import { Model } from './model';
+                    describe('scan', () => {
+                        it('should pass inline spec call', () => fieldKeys.specModel<Model>());
+                    });
+                `,
+                'src/a.ts': `
+                    import { fieldKeys } from './generated/field-registry';
+                    import { Model } from './model';
+                    export const PROD = fieldKeys.prodModel<Model>();
+                `,
+            });
+
+            const res = fx.run({ includeSpec: false });
+
+            expect2(() => entryNames(res)).toEqual(['prodModel']);
+        });
     });
 
-    it('resolves intersection types across multiple interfaces', () => {
-        const root = makeTmpProject({
-            'tsconfig.json': TSCONFIG,
-            'src/generated/field-registry.ts': bootstrapStub(),
-            'src/model.ts': `
-                export interface A { a: string; shared: number }
-                export interface B { b: string; shared: number }
-                export interface C { c: string }
-            `,
-            'src/index.ts': `
-                import { fieldKeys } from './generated/field-registry';
-                import { A, B, C } from './model';
-                export const F = fieldKeys.abcMix<A & B & C>();
-            `,
+    //* throw로 중단되는 케이스.
+    describe('error cases', () => {
+        it('should fail legacy leftovers by default', () => {
+            const fx = instance(
+                {
+                    'src/model.ts': `export interface Model { id: string }`,
+                    'src/a.ts': `
+                        import { keys } from 'ts-transformer-keys';
+                        import { Model } from './model';
+                        export const FIELDS = keys<Model>();
+                    `,
+                },
+                { withLegacyKeys: true },
+            );
+
+            expect2(() => fx.runErr()).toEqual(
+                [
+                    'found 1 legacy `keys<T>()` call site(s); run `lemon-fields migrate` first or pass `--allow-legacy`:',
+                    '  - src/a.ts :: keys<Model>()',
+                ].join('\n'),
+            );
         });
 
-        const res = runGen(baseOpts(root));
-        expect(res.entries).toHaveLength(1);
-        expect(res.entries[0].name).toBe('abcMix');
-        expect(res.entries[0].fields.sort()).toEqual(['a', 'b', 'c', 'shared']);
+        it('should pass legacy leftovers only when --allow-legacy is enabled', () => {
+            const fx = instance(
+                {
+                    'src/model.ts': `export interface UserModel { id: string }`,
+                    'src/a.ts': `
+                        import { keys } from 'ts-transformer-keys';
+                        import { UserModel } from './model';
+                        export const FIELDS = keys<UserModel>();
+                    `,
+                },
+                { withLegacyKeys: true },
+            );
+
+            const res = fx.run({ allowLegacy: true });
+
+            expect2(() => ({ names: entryNames(res), legacyLeftovers: res.legacyLeftovers })).toEqual({
+                names: ['userModel'],
+                legacyLeftovers: [{ relPath: 'src/a.ts', typeArgText: 'UserModel' }],
+            });
+        });
+
+        it('should fail divergent registry names across different models', () => {
+            const fx = instance({
+                'src/model.ts': `
+                    export interface Mine { a: string; b: string }
+                    export interface Ours { x: string; y: string }
+                `,
+                'src/a.ts': `
+                    import { fieldKeys } from './generated/field-registry';
+                    import { Mine } from './model';
+                    export const A = fieldKeys.same<Mine>();
+                `,
+                'src/b.ts': `
+                    import { fieldKeys } from './generated/field-registry';
+                    import { Ours } from './model';
+                    export const B = fieldKeys.same<Ours>();
+                `,
+            });
+
+            expect2(() => fx.runErr()).toEqual(
+                [
+                    'duplicate registry name `same` with divergent field sets:',
+                    '  - src/a.ts :: Mine -> [a, b]',
+                    '  - src/b.ts :: Ours -> [x, y]',
+                    'Hand-edit one of the call sites to a distinct name.',
+                ].join('\n'),
+            );
+        });
+
+        it('should fail divergent local types even when the type text is the same', () => {
+            const fx = instance({
+                'src/a.ts': `
+                    import { fieldKeys } from './generated/field-registry';
+                    interface LocalModel { id: string; a: string }
+                    export const A = fieldKeys.same<LocalModel>();
+                `,
+                'src/b.ts': `
+                    import { fieldKeys } from './generated/field-registry';
+                    interface LocalModel { id: string; b: string }
+                    export const B = fieldKeys.same<LocalModel>();
+                `,
+            });
+
+            expect2(() => fx.runErr()).toEqual(
+                [
+                    'duplicate registry name `same` with divergent field sets:',
+                    '  - src/a.ts :: LocalModel -> [id, a]',
+                    '  - src/b.ts :: LocalModel -> [id, b]',
+                    'Hand-edit one of the call sites to a distinct name.',
+                ].join('\n'),
+            );
+        });
+
+        it('should fail empty scan by default', () => {
+            const fx = instance(
+                {
+                    'src/a.ts': `export const value = 1;`,
+                },
+                { withRegistry: false },
+            );
+
+            expect2(() => fx.runErr()).toEqual(EMPTY_SCAN_ERROR);
+        });
+
+        it('should pass empty scan only when --allow-empty is enabled', () => {
+            const fx = instance(
+                {
+                    'src/a.ts': `export const value = 1;`,
+                },
+                { withRegistry: false },
+            );
+
+            const res = fx.run({ allowEmpty: true });
+
+            expect2(() => ({ entries: res.entries, bootstrapStub: isBootstrapStub(res.content) })).toEqual({
+                entries: [],
+                bootstrapStub: true,
+            });
+        });
     });
 
-    it('preserves property names verbatim — same interface, different names are distinct entries', () => {
-        const root = makeTmpProject({
-            'tsconfig.json': TSCONFIG,
-            'src/generated/field-registry.ts': bootstrapStub(),
-            'src/model.ts': `export interface M { id: string; x: number }`,
-            'src/a.ts': `
-                import { fieldKeys } from './generated/field-registry';
-                import { M } from './model';
-                export const A = fieldKeys.alpha<M>();
-            `,
-            'src/b.ts': `
-                import { fieldKeys } from './generated/field-registry';
-                import { M } from './model';
-                export const B = fieldKeys.bravo<M>();
-            `,
+    //* 조용히 누락되거나 일부만 생성되는 케이스.
+    describe('omission cases', () => {
+        it('should pass partial generation by --paths without pretending completeness', () => {
+            const fx = instance({
+                'src/models/user.ts': `export interface UserModel { id: string; name: string }`,
+                'src/models/post.ts': `export interface PostModel { id: string; title: string }`,
+                'src/modules/user/fields.ts': `
+                    import { fieldKeys } from '../../generated/field-registry';
+                    import { UserModel } from '../../models/user';
+                    export const USER_FIELDS = fieldKeys.userModel<UserModel>();
+                `,
+                'src/modules/post/fields.ts': `
+                    import { fieldKeys } from '../../generated/field-registry';
+                    import { PostModel } from '../../models/post';
+                    export const POST_FIELDS = fieldKeys.postModel<PostModel>();
+                `,
+            });
+
+            const res = fx.run({ paths: ['src/modules/user/**/*.ts'] });
+
+            //* user module만 scan 했으므로 postModel은 빠지는 게 정상이다.
+            expect2(() => fieldMap(res)).toEqual({ userModel: ['id', 'name'] });
         });
 
-        const res = runGen(baseOpts(root));
-        const names = res.entries.map(e => e.name).sort();
-        expect(names).toEqual(['alpha', 'bravo']);
-        //* 같은 interface를 다른 registry key로 노출하므로 field 목록은 동일해야 함.
-        for (const e of res.entries) expect(e.fields.sort()).toEqual(['id', 'x']);
+        it('should pass direct calls and silently omit alias blind spots', () => {
+            const fx = instance({
+                'src/model.ts': `export interface UserModel { id: string; name: string }`,
+                'src/direct.ts': `
+                    import { fieldKeys } from './generated/field-registry';
+                    import { UserModel } from './model';
+                    export const DIRECT = fieldKeys.directModel<UserModel>();
+                `,
+                'src/alias.ts': `
+                    import { fieldKeys } from './generated/field-registry';
+                    import { UserModel } from './model';
+                    const fk = fieldKeys;
+                    export const ALIAS = fk.userModel<UserModel>();
+                `,
+            });
+
+            const res = fx.run();
+
+            //* 현재 scanner는 direct property call만 잡는다.
+            expect2(() => entryNames(res)).toEqual(['directModel']);
+        });
+
+        it('should fail with empty scan when every call site is hidden behind a blind spot', () => {
+            const fx = instance({
+                'src/model.ts': `export interface UserModel { id: string; name: string }`,
+                'src/alias.ts': `
+                    import { fieldKeys } from './generated/field-registry';
+                    import { UserModel } from './model';
+
+                    const fk = fieldKeys;
+                    export const ALIAS = fk.userModel<UserModel>();
+                `,
+            });
+
+            expect2(() => fx.runErr()).toEqual(EMPTY_SCAN_ERROR);
+        });
     });
 
-    it('allows duplicate registry key when resolved field sets are identical', () => {
-        const root = makeTmpProject({
-            'tsconfig.json': TSCONFIG,
-            'src/generated/field-registry.ts': bootstrapStub(),
-            'src/model.ts': `export interface M { id: string; x: number }`,
-            'src/a.ts': `
-                import { fieldKeys } from './generated/field-registry';
-                import { M } from './model';
-                export const A = fieldKeys.same<M>();
-            `,
-            'src/b.ts': `
-                import { fieldKeys } from './generated/field-registry';
-                import { M } from './model';
-                export const B = fieldKeys.same<M>();
-            `,
+    //* property가 0개인 타입은 실패가 아니라 정상 `[]` 생성이다.
+    describe('empty-property cases', () => {
+        it('should pass empty-property materialisation for migrated and legacy call sites', () => {
+            const migrated = instance({
+                'src/a.ts': `
+                    import { fieldKeys } from './generated/field-registry';
+                    interface A { a: string }
+                    interface B { b: string }
+
+                    export const EMPTY = fieldKeys.empty<{}>();
+                    export const UNION = fieldKeys.union<A | B>();
+                    export const RECORD = fieldKeys.record<Record<string, unknown>>();
+                    export function generic<T>() { return fieldKeys.generic<T>(); }
+                    export function constrained<T extends { id: string }>() { return fieldKeys.withId<T>(); }
+                `,
+            }).run();
+
+            expect2(() => ({ skipped: migrated.skipped, fields: fieldMap(migrated) })).toEqual({
+                skipped: [],
+                fields: {
+                    empty: [],
+                    generic: [],
+                    record: [],
+                    union: [],
+                    withId: ['id'],
+                },
+            });
+
+            //* legacy 호환 모드에서도 같은 계열 타입은 실패하지 않고 빈 배열로 materialise 된다.
+            const legacy = instance(
+                {
+                    'src/a.ts': `
+                        import { keys } from 'ts-transformer-keys';
+                        interface A { a: string }
+                        interface B { b: string }
+
+                        export const EMPTY = keys<{}>();
+                        export const UNION = keys<A | B>();
+                        export const RECORD = keys<Record<string, unknown>>();
+                        export function generic<T>() { return keys<T>(); }
+                        export function constrained<T extends { id: string }>() { return keys<T>(); }
+                    `,
+                },
+                { withLegacyKeys: true },
+            ).run({ allowLegacy: true });
+
+            expect2(() => ({ skipped: legacy.skipped, byType: legacyTypeMap(legacy) })).toEqual({
+                skipped: [],
+                byType: {
+                    '{}': { fields: [], legacy: true },
+                    'A | B': { fields: [], legacy: true },
+                    'Record<string, unknown>': { fields: [], legacy: true },
+                    T: { fields: ['id'], legacy: true },
+                },
+            });
         });
-
-        const res = runGen(baseOpts(root));
-
-        expect(res.entries.map(e => e.name)).toEqual(['same']);
-        expect(res.entries[0].fields).toEqual(['id', 'x']);
-    });
-
-    it('tracks aliased import: `fieldKeys as lemonFieldKeys`', () => {
-        const root = makeTmpProject({
-            'tsconfig.json': TSCONFIG,
-            'src/generated/field-registry.ts': bootstrapStub(),
-            'src/model.ts': `export interface M { id: string }`,
-            'src/index.ts': `
-                import { fieldKeys as lemonFieldKeys } from './generated/field-registry';
-                import { M } from './model';
-                export const F = lemonFieldKeys.modelA<M>();
-            `,
-        });
-        const res = runGen(baseOpts(root));
-        expect(res.entries.map(e => e.name)).toEqual(['modelA']);
-    });
-
-    it('skips the output file itself (never scans generated registry)', () => {
-        const root = makeTmpProject({
-            'tsconfig.json': TSCONFIG,
-            'src/generated/field-registry.ts': `
-                export const fieldKeys = {
-                    thing: <T extends object>() => ['a', 'b'] as Array<Extract<keyof T, string>>,
-                } as const;
-            `,
-            'src/model.ts': `export interface M { id: string }`,
-            'src/index.ts': `
-                import { fieldKeys } from './generated/field-registry';
-                import { M } from './model';
-                export const F = fieldKeys.modelB<M>();
-            `,
-        });
-        const res = runGen(baseOpts(root));
-        expect(res.entries.map(e => e.name)).toEqual(['modelB']);
-    });
-
-    it('includes spec files when includeSpec=true', () => {
-        const root = makeTmpProject({
-            'tsconfig.json': TSCONFIG,
-            'src/generated/field-registry.ts': bootstrapStub(),
-            'src/model.ts': `export interface M { id: string }`,
-            'src/a.spec.ts': `
-                import { fieldKeys } from './generated/field-registry';
-                import { M } from './model';
-                describe('x', () => { it('y', () => { fieldKeys.specModel<M>(); }); });
-            `,
-        });
-        const res = runGen(baseOpts(root));
-        expect(res.entries.map(e => e.name)).toEqual(['specModel']);
-    });
-
-    it('excludes spec files when includeSpec=false', () => {
-        const root = makeTmpProject({
-            'tsconfig.json': TSCONFIG,
-            'src/generated/field-registry.ts': bootstrapStub(),
-            'src/model.ts': `export interface M { id: string }`,
-            'src/a.spec.ts': `
-                import { fieldKeys } from './generated/field-registry';
-                import { M } from './model';
-                describe('x', () => { it('y', () => { fieldKeys.specModel<M>(); }); });
-            `,
-            'src/a.ts': `
-                import { fieldKeys } from './generated/field-registry';
-                import { M } from './model';
-                export const X = fieldKeys.prodModel<M>();
-            `,
-        });
-        const res = runGen(baseOpts(root, { includeSpec: false }));
-        expect(res.entries.map(e => e.name)).toEqual(['prodModel']);
-    });
-
-    it('should pass --paths scan with imported model type context', () => {
-        const root = makeTmpProject({
-            'tsconfig.json': TSCONFIG,
-            'src/generated/field-registry.ts': bootstrapStub(),
-            'src/models/user.ts': `export interface UserModel { id: string; name: string }`,
-            'src/models/post.ts': `export interface PostModel { id: string; title: string }`,
-            'src/modules/user/fields.ts': `
-                import { fieldKeys } from '../../generated/field-registry';
-                import { UserModel } from '../../models/user';
-                export const USER_FIELDS = fieldKeys.userModel<UserModel>();
-            `,
-            'src/modules/post/fields.ts': `
-                import { fieldKeys } from '../../generated/field-registry';
-                import { PostModel } from '../../models/post';
-                export const POST_FIELDS = fieldKeys.postModel<PostModel>();
-            `,
-        });
-
-        const res = runGen(baseOpts(root, { paths: ['src/modules/user/**/*.ts'] }));
-
-        expect(res.entries.map(e => e.name)).toEqual(['userModel']);
-        expect(res.entries[0].fields).toEqual(['id', 'name']);
-    });
-});
-
-describe('runGen — failure modes', () => {
-    it('fails on un-migrated legacy `keys<T>()` by default', () => {
-        const root = makeTmpProject({
-            'tsconfig.json': TSCONFIG,
-            'node_modules/ts-transformer-keys/package.json': JSON.stringify({
-                name: 'ts-transformer-keys',
-                main: 'index.js',
-            }),
-            'node_modules/ts-transformer-keys/index.js': `exports.keys = () => [];`,
-            'node_modules/ts-transformer-keys/index.d.ts': `export function keys<T>(): Array<Extract<keyof T, string>>;`,
-            'src/generated/field-registry.ts': bootstrapStub(),
-            'src/model.ts': `export interface M { id: string }`,
-            'src/a.ts': `
-                import { keys } from 'ts-transformer-keys';
-                import { M } from './model';
-                export const F = keys<M>();
-            `,
-        });
-        expect(() => runGen(baseOpts(root))).toThrow(/legacy.*keys<T>\(\)/);
-    });
-
-    it('--allow-legacy derives names for legacy sites', () => {
-        const root = makeTmpProject({
-            'tsconfig.json': TSCONFIG,
-            'node_modules/ts-transformer-keys/package.json': JSON.stringify({
-                name: 'ts-transformer-keys',
-                main: 'index.js',
-            }),
-            'node_modules/ts-transformer-keys/index.js': `exports.keys = () => [];`,
-            'node_modules/ts-transformer-keys/index.d.ts': `export function keys<T>(): Array<Extract<keyof T, string>>;`,
-            'src/generated/field-registry.ts': bootstrapStub(),
-            'src/model.ts': `export interface UserModel { id: string }`,
-            'src/a.ts': `
-                import { keys } from 'ts-transformer-keys';
-                import { UserModel } from './model';
-                export const F = keys<UserModel>();
-            `,
-        });
-        const res = runGen(baseOpts(root, { allowLegacy: true }));
-        expect(res.entries.map(e => e.name)).toEqual(['userModel']);
-        expect(res.legacyLeftovers).toHaveLength(1);
-    });
-
-    it('fails on duplicate name with divergent field sets', () => {
-        const root = makeTmpProject({
-            'tsconfig.json': TSCONFIG,
-            'src/generated/field-registry.ts': bootstrapStub(),
-            'src/model.ts': `
-                export interface Mine { a: string; b: string }
-                export interface Ours { x: string; y: string }
-            `,
-            'src/a.ts': `
-                import { fieldKeys } from './generated/field-registry';
-                import { Mine } from './model';
-                export const A = fieldKeys.same<Mine>();
-            `,
-            'src/b.ts': `
-                import { fieldKeys } from './generated/field-registry';
-                import { Ours } from './model';
-                export const B = fieldKeys.same<Ours>();
-            `,
-        });
-        expect(() => runGen(baseOpts(root))).toThrow(/divergent/);
-    });
-
-    it('fails on duplicate name with same type text but divergent local fields', () => {
-        const root = makeTmpProject({
-            'tsconfig.json': TSCONFIG,
-            'src/generated/field-registry.ts': bootstrapStub(),
-            'src/a.ts': `
-                import { fieldKeys } from './generated/field-registry';
-                interface LocalModel { id: string; a: string }
-                export const A = fieldKeys.same<LocalModel>();
-            `,
-            'src/b.ts': `
-                import { fieldKeys } from './generated/field-registry';
-                interface LocalModel { id: string; b: string }
-                export const B = fieldKeys.same<LocalModel>();
-            `,
-        });
-        expect(() => runGen(baseOpts(root))).toThrow(/divergent/);
-    });
-
-    it('fails on empty scan by default, allows with --allow-empty', () => {
-        const root = makeTmpProject({
-            'tsconfig.json': TSCONFIG,
-            'src/a.ts': `export const x = 1;`,
-        });
-        expect(() => runGen(baseOpts(root))).toThrow(/no `fieldKeys/);
-        const res = runGen(baseOpts(root, { allowEmpty: true }));
-        expect(res.entries).toHaveLength(0);
-        expect(res.content).toContain('as Record<');
-    });
-
-    it('reports skipped migrated and legacy sites whose types expose no fields', () => {
-        const migratedRoot = makeTmpProject({
-            'tsconfig.json': TSCONFIG,
-            'src/generated/field-registry.ts': bootstrapStub(),
-            'src/a.ts': `
-                import { fieldKeys } from './generated/field-registry';
-                export const F = fieldKeys.empty<{}>();
-            `,
-        });
-        const migrated = runGen(baseOpts(migratedRoot, { allowEmpty: true }));
-        expect(migrated.entries).toHaveLength(0);
-        expect(migrated.skipped).toEqual([
-            { relPath: 'src/a.ts', typeArgText: '{}', reason: 'type resolved to no properties' },
-        ]);
-
-        const legacyRoot = makeTmpProject({
-            'tsconfig.json': TSCONFIG,
-            ...{
-                'node_modules/ts-transformer-keys/package.json': JSON.stringify({
-                    name: 'ts-transformer-keys',
-                    main: 'index.js',
-                }),
-                'node_modules/ts-transformer-keys/index.js': `exports.keys = () => [];`,
-                'node_modules/ts-transformer-keys/index.d.ts': `export function keys<T>(): Array<Extract<keyof T, string>>;`,
-            },
-            'src/generated/field-registry.ts': bootstrapStub(),
-            'src/a.ts': `
-                import { keys } from 'ts-transformer-keys';
-                export const F = keys<{}>();
-            `,
-        });
-        const legacy = runGen(baseOpts(legacyRoot, { allowLegacy: true, allowEmpty: true }));
-        expect(legacy.entries).toHaveLength(0);
-        expect(legacy.skipped).toEqual([
-            { relPath: 'src/a.ts', typeArgText: '{}', reason: 'type resolved to no properties' },
-        ]);
     });
 });
