@@ -11,9 +11,10 @@
 import * as path from 'path';
 
 import { runGen, writeRegistry } from '../fields/field-gen';
+import { runGuardCommon } from '../fields/field-guard-common';
 import { runMigrate } from '../fields/field-migrate';
 
-type Subcommand = 'gen' | 'migrate';
+type Subcommand = 'gen' | 'migrate' | 'guard-common';
 
 interface ParsedFlags {
     /** `gen --check`: 파일을 쓰지 않고 drift만 확인 */
@@ -32,6 +33,8 @@ interface ParsedFlags {
     report?: boolean;
     /** migration 완료 후 ts-transformer-keys transformer plugin 제거 */
     'update-tsconfig'?: boolean;
+    /** `guard-common --target <name>`: guard를 삽입할 함수/변수명 */
+    target?: string;
     /** spec 파일 scan 여부. `--no-include-spec`이면 false */
     'include-spec'?: boolean;
     /** `--help` 또는 `-h` */
@@ -55,6 +58,7 @@ lemon-fields — materialise \`fieldKeys.<name><T>()\` call sites into a committ
 USAGE
   lemon-fields [gen]            Regenerate src/generated/field-registry.ts (default)
   lemon-fields migrate          One-shot codemod: rewrite legacy \`keys<T>()\` sites.
+  lemon-fields guard-common     Upsert common field expect2 guards into checkAllKeys.
   lemon-fields --check          CI guard: fail if the generated file is out-of-date.
 
 OPTIONS (both subcommands)
@@ -75,11 +79,17 @@ MIGRATE-ONLY
   --allow-skips                 report unrewritable sites instead of failing
   --update-tsconfig             remove ts-transformer-keys transformer plugin after full migration
   --report                      print summary table
+
+GUARD-COMMON-ONLY
+  --target <name>               default: checkAllKeys
+  --dry-run                     compute changes without writing
+  --diff                        print a compact source diff
+  --report                      print updated guard table
 `.trim();
 
 const parse = (argv: string[]): ParsedArgs => {
     const [head, ...tail] = argv;
-    const hasSubcommand = head === 'migrate' || head === 'gen';
+    const hasSubcommand = head === 'migrate' || head === 'gen' || head === 'guard-common';
     const subcommand: Subcommand = hasSubcommand ? head : 'gen';
     const tokens = hasSubcommand ? tail : argv;
     return { subcommand, flags: parseFlags(tokens) };
@@ -115,6 +125,8 @@ const parseFlags = (tokens: string[], flags: ParsedFlags = {}): ParsedFlags => {
             return parseFlags(rest, { ...flags, out: requireFlagValue(key, value) });
         case 'paths':
             return parseFlags(rest, { ...flags, paths: [...(flags.paths ?? []), requireFlagValue(key, value)] });
+        case 'target':
+            return parseFlags(rest, { ...flags, target: requireFlagValue(key, value) });
         case 'help':
         case 'h':
             return parseFlags(tokens.slice(1), { ...flags, help: true });
@@ -226,6 +238,30 @@ const runMigrateCmd = (flags: ParsedArgs['flags']): number => {
     return 0;
 };
 
+const runGuardCommonCmd = (flags: ParsedArgs['flags']): number => {
+    const common = commonOpts(flags);
+    const res = runGuardCommon({
+        tsconfig: common.tsconfig,
+        paths: common.paths,
+        targetName: flags.target ?? 'checkAllKeys',
+        dryRun: Boolean(flags['dry-run']),
+        diff: Boolean(flags['diff']),
+        cwd: process.cwd(),
+    });
+    const mode = flags['dry-run'] ? '[dry-run] ' : '';
+    process.stdout.write(
+        `[lemon-fields] ${mode}guard-common — ${res.guards.length} guard(s), ` +
+            `${res.changedFiles.length} file(s)${flags['dry-run'] ? '' : ' updated'}.\n`,
+    );
+    if (flags['report']) {
+        for (const g of res.guards) {
+            process.stdout.write(`  ${g.relPath}  ${g.targetName}  ${g.varName} ${g.action}: ${g.expected}\n`);
+        }
+    }
+    if (res.diffs?.length) process.stdout.write(`${res.diffs.join('\n')}\n`);
+    return 0;
+};
+
 export const main = (argv: string[]): number => {
     try {
         const { subcommand, flags } = parse(argv);
@@ -233,7 +269,9 @@ export const main = (argv: string[]): number => {
             process.stdout.write(`${USAGE}\n`);
             return 0;
         }
-        return subcommand === 'migrate' ? runMigrateCmd(flags) : runGenCmd(flags);
+        if (subcommand === 'migrate') return runMigrateCmd(flags);
+        if (subcommand === 'guard-common') return runGuardCommonCmd(flags);
+        return runGenCmd(flags);
     } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         process.stderr.write(`[lemon-fields] ERROR: ${msg}\n`);

@@ -23,6 +23,7 @@ export const USER_FIELDS = fieldKeys.userModel<UserModel>();
 - `migrate`: 기존 `keys<T>()` 호출을 `fieldKeys.<name><T>()`로 바꾼다.
 - `gen`: TypeScript checker로 `<T>`의 field 목록을 읽고 `src/generated/field-registry.ts`를 만든다.
 - `--check`: generated registry가 최신인지 CI에서 확인한다.
+- `guard-common`: transformer spec의 `checkAllKeys` 안에 공통 모델 필드 검증을 삽입/갱신한다.
 - runtime에서는 transformer 없이 generated TypeScript 파일만 사용한다.
 
 ## 빠른 시작
@@ -88,6 +89,38 @@ npx lemon-fields --check
 
 generated registry가 source와 다르면 exit code `1`로 실패한다. CI에서는 이 명령을 쓰면 된다.
 
+### 6. test watch 전에 공통필드 guard 실행
+
+```sh
+npx lemon-fields guard-common --report
+```
+
+이 명령은 `src/**/*.spec.ts`에서 `checkAllKeys`를 찾고, 공통필드 검증 블록이 없으면 자동으로 넣는다.
+
+개발자는 보통 `test:watch` 앞에 붙여두면 된다.
+
+```json
+{
+  "scripts": {
+    "test:watch": "lemon-fields guard-common && LS=1 jest --config=jest.config.json --watchAll"
+  }
+}
+```
+
+처음 실행하면 필요한 spec 파일이 업데이트된다.
+
+```txt
+[lemon-fields] guard-common — 3 guard(s), 3 file(s) updated.
+```
+
+이미 guard가 있으면 아무 파일도 고치지 않고 바로 test watch로 넘어간다.
+
+```txt
+[lemon-fields] guard-common — 0 guard(s), 0 file(s) updated.
+```
+
+`$` 포함 여부는 spec의 base field 변수에서 자동 판별한다. `CORE_FIELDS`를 쓰면 `$`를 포함하고, `['meta']`처럼 `$`가 없는 base를 쓰면 `$`를 제외한다.
+
 ## package.json 예시
 
 ```json
@@ -96,6 +129,8 @@ generated registry가 source와 다르면 exit code `1`로 실패한다. CI에�
     "fields:migrate": "lemon-fields migrate --report --update-tsconfig",
     "fields:gen": "lemon-fields gen --report",
     "fields:check": "lemon-fields --check",
+    "fields:guard-common": "lemon-fields guard-common --report",
+    "test:watch": "lemon-fields guard-common && LS=1 jest --config=jest.config.json --watchAll",
     "build": "npm run fields:gen && tsc"
   }
 }
@@ -277,6 +312,41 @@ $ npm run build-ts
 
 위 project에서는 migration 후 `build-ts`가 통과했다. 일부 service spec 실패가 있었지만, field migration과 직접 관련된 transformer/mock/callback/view spec은 통과했다.
 
+### common field guard 적용
+
+```sh
+$ ./node_modules/.bin/lemon-fields guard-common --dry-run --diff --report
+[lemon-fields] [dry-run] guard-common — 3 guard(s), 3 file(s).
+  src/view/transformer.spec.ts  checkAllKeys  $mock inserted: id,ns,gid,sid,uid,lock,meta,next,type,error,stereo,createdAt,deletedAt,updatedAt
+  src/modules/callback/transformer.spec.ts  checkAllKeys  $temp inserted: id,ns,gid,sid,uid,lock,meta,next,type,error,stereo,createdAt,deletedAt,updatedAt
+  src/modules/mock/transformer.spec.ts  checkAllKeys  $mock inserted: id,ns,gid,sid,uid,lock,meta,next,type,error,stereo,createdAt,deletedAt,updatedAt
+```
+
+실제 적용:
+
+```sh
+$ ./node_modules/.bin/lemon-fields guard-common --report
+[lemon-fields] guard-common — 3 guard(s), 3 file(s) updated.
+
+$ ./node_modules/.bin/lemon-fields guard-common --report
+[lemon-fields] guard-common — 0 guard(s), 0 file(s) updated.
+```
+
+삽입되는 guard는 기존 `notInModel`, `keys`, `alls`, `return` 로직을 바꾸지 않고 `checkAllKeys` 맨 앞에 들어간다.
+
+```ts
+const commons = fields.reduce<string[]>((L, a) => {
+    if ($mock.includes(a)) L.push(a);
+    return L;
+}, []);
+expect2(() => $mock?.sort((a, b) => a.length - b.length || a.localeCompare(b)).join(',')).toEqual(
+    'id,ns,gid,sid,uid,lock,meta,next,type,error,stereo,createdAt,deletedAt,updatedAt',
+);
+expect2(() => commons?.sort((a, b) => a.length - b.length || a.localeCompare(b)).join(',')).toEqual(
+    'id,ns,gid,sid,uid,lock,meta,next,type,error,stereo,createdAt,deletedAt,updatedAt',
+);
+```
+
 ## CLI 옵션
 
 공통 옵션:
@@ -301,6 +371,96 @@ $ npm run build-ts
 - `--allow-skips`: 자동 처리 불가 위치를 실패 대신 skipped로 보고
 - `--update-tsconfig`: 전체 migration 완료 후 `ts-transformer-keys/transformer` plugin 제거
 - `--report`: rewrite 결과 요약 출력
+
+`guard-common` 옵션:
+
+- `--dry-run`: source를 쓰지 않고 삽입/갱신 결과만 계산
+- `--diff`: 변경될 source diff 출력. 보통 `--dry-run`과 함께 사용
+- `--paths <glob>`: 특정 spec 파일만 대상으로 제한
+- `--target <name>`: 기본값 `checkAllKeys`
+- `--report`: 삽입/갱신된 guard 위치와 expected 문자열 출력
+
+## Common field guard
+
+`guard-common`은 개발자가 `test:watch`를 실행할 때 transformer spec의 공통필드 검증을 자동으로 맞춰주는 명령이다.
+
+기본 사용법:
+
+```sh
+npx lemon-fields guard-common --report
+```
+
+보통은 `package.json`의 `test:watch` 앞에 붙인다.
+
+```json
+{
+  "scripts": {
+    "test:watch": "lemon-fields guard-common && LS=1 jest --config=jest.config.json --watchAll"
+  }
+}
+```
+
+이렇게 해두면 동작은 단순하다.
+
+- guard가 없으면 최초 1회 spec 파일에 자동 삽입
+- guard가 이미 있으면 no-op
+- 그 다음 기존 `jest --watchAll` 실행
+- 이후 공통필드가 바뀌면 watch test가 실패하므로 개발자가 literal 문자열을 갱신
+
+### `$` 포함 여부
+
+개발자가 `$` 포함 여부를 직접 맞출 필요는 없다. `guard-common`이 현재 spec의 base field 변수를 보고 expected 문자열을 고른다.
+
+예를 들어 `CORE_FIELDS`를 base로 쓰는 경우는 `$`를 포함한다.
+
+```ts
+const $node = filterFields(keys<Model>(), CORE_FIELDS);
+```
+
+삽입되는 expected:
+
+```txt
+$,id,ns,gid,sid,uid,lock,meta,next,type,error,stereo,createdAt,deletedAt,updatedAt
+```
+
+반대로 `['meta']`처럼 `$`가 없는 base를 쓰면 `$`를 제외한다.
+
+```ts
+const $mock = filterFields(keys<Model>(), ['meta']);
+const $temp = filterFields(keys<Model>(), ['meta']);
+```
+
+삽입되는 expected:
+
+```txt
+id,ns,gid,sid,uid,lock,meta,next,type,error,stereo,createdAt,deletedAt,updatedAt
+```
+
+즉 repo마다 `$` 포함 여부를 사람이 맞추지 않아도 된다.
+
+### test:watch에 연결
+
+watch 시작 전에 한 번 실행하면 된다.
+
+```json
+{
+  "scripts": {
+    "test:watch": "lemon-fields guard-common && LS=1 jest --config=jest.config.json --watchAll"
+  }
+}
+```
+
+처음 실행하면 필요한 spec 파일을 고친다.
+
+```txt
+[lemon-fields] guard-common — 8 guard(s), 8 file(s) updated.
+```
+
+이후 실행은 no-op이다.
+
+```txt
+[lemon-fields] guard-common — 0 guard(s), 0 file(s) updated.
+```
 
 ## 주의사항
 
@@ -470,19 +630,21 @@ npx lemon-fields migrate --update-tsconfig --report
 
 ## 어디서 무엇을 검사하나
 
-쉽게 말해, 검사는 3번 한다.
+쉽게 말해, 검사는 4번 한다.
 
 | 단계 | 도구 | 무엇을 잡나 |
 |---|---|---|
 | Dev | `gen --report` | 생성 결과를 사람이 눈으로 확인 |
 | CI | `gen --check` | source는 바뀌었는데 `gen`을 안 돌린 상태 |
 | Runtime | `assertFieldRegistry` | 이미 생성된 registry 파일 손상/누락 |
+| Spec | `guard-common` | transformer spec의 common field guard 누락 |
 
 짧게 정리하면:
 
 - `gen --report`: 사람이 눈으로 확인
 - `gen --check`: CI가 `gen` 누락을 자동으로 차단
 - `assertFieldRegistry`: 실행 중에 generated file 손상 여부 확인
+- `guard-common`: spec의 `checkAllKeys`에 공통필드 검증이 없으면 자동 삽입
 
 ## 앱 시작 시 registry 검사
 
@@ -645,6 +807,7 @@ const FIELDS = keys<User>(); // 기대: ['id', 'name'], 실제: []
 - 빈 타입 처리: property가 0개인 타입은 실패 대신 `[]` 생성
 - meta/validation: `fieldRegistryMeta`, checksum, bootstrap meta 생성
 - runtime validator: `assertFieldRegistry`와 `validateFieldRegistry`의 오류 검출
+- common field guard: `$` 포함 여부를 base 변수에서 판단하고 `checkAllKeys` guard 삽입
 
 ## 내부 파일 구조
 
@@ -655,4 +818,5 @@ const FIELDS = keys<User>(); // 기대: ['id', 'name'], 실제: []
 - `field-derive-name.ts`: registry key 이름 규칙. 자동 이름이 왜 그렇게 붙었는지 볼 때
 - `field-migrate.ts`: `keys<T>()`를 `fieldKeys.<name><T>()`로 바꾸는 로직
 - `field-gen.ts`: scan 후 concrete registry를 만드는 로직
+- `field-guard-common.ts`: `checkAllKeys`의 common field guard를 삽입/갱신하는 로직
 - `../bin/lemon-fields.ts`: CLI 시작점. `gen`, `migrate`, `--check`, `--report` 처리를 볼 때
