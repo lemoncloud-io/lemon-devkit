@@ -138,13 +138,16 @@ describe('assertCommonFields', () => {
     });
 
     it('should include extra fields in a stale message', () => {
-        expect(() => assertCommonFields([...DEFAULT_COMMON_MODEL_FIELDS, 'newField'], { entryName: 'flows.Model' }))
-            .toThrow([
+        expect(() =>
+            assertCommonFields([...DEFAULT_COMMON_MODEL_FIELDS, 'newField'], { entryName: 'flows.Model' }),
+        ).toThrow(
+            [
                 '[common-fields] flows.Model is stale.',
                 `  expected: ${WITH_DOLLAR}`,
                 '  actual:   $,id,ns,gid,sid,uid,lock,meta,next,type,error,stereo,newField,createdAt,deletedAt,updatedAt',
                 '  extra:    newField',
                 '  run `npm run fields:gen`',
-            ].join('\n'));
+            ].join('\n'),
+        );
     });
 });
