@@ -211,6 +211,64 @@ describe('lemon-fields CLI', () => {
         expect(res.stdout).toContain('catalogModel  src/a.ts#CatalogModel  fields(2): id, public');
     });
 
+    it('should pass guard-common with `$` adjusted from checkAllKeys base variable', () => {
+        const root = makeTmpProject({
+            'tsconfig.json': TSCONFIG,
+            'src/flows.spec.ts': [
+                `import { expect2, CORE_FIELDS } from 'lemon-core';`,
+                `const filterFields = (fields: string[], base: string[] = []) => base.concat(fields);`,
+                `const $node = filterFields([], CORE_FIELDS);`,
+                `describe('x', () => {`,
+                `    const notInModel = (fields: string[]) => fields.filter(s => !$node.includes(s));`,
+                `    const checkAllKeys = (model: object, fields: string[]) => {`,
+                `        const keys = Object.keys(model);`,
+                `        const alls = notInModel(fields);`,
+                `        return alls.filter(k => !keys.includes(k));`,
+                `    };`,
+                `});`,
+            ].join('\n'),
+            'src/mock.spec.ts': [
+                `import { expect2 } from 'lemon-core';`,
+                `const filterFields = (fields: string[], base: string[] = []) => base.concat(fields);`,
+                `const $mock = filterFields([], ['meta']);`,
+                `describe('x', () => {`,
+                `    const notInModel = (fields: string[]) => fields.filter(s => !$mock.includes(s));`,
+                `    const checkAllKeys = (model: object, fields: string[]) => {`,
+                `        const keys = Object.keys(model);`,
+                `        const alls = notInModel(fields);`,
+                `        return alls.filter(k => !keys.includes(k));`,
+                `    };`,
+                `});`,
+            ].join('\n'),
+        });
+
+        const res = instance(root, ['guard-common', '--report']);
+        const flows = fs.readFileSync(path.join(root, 'src/flows.spec.ts'), 'utf8');
+        const mock = fs.readFileSync(path.join(root, 'src/mock.spec.ts'), 'utf8');
+
+        expect(res.code).toBe(0);
+        expect(res.stderr).toBe('');
+        expect(res.stdout).toContain('[lemon-fields] guard-common — 2 guard(s), 2 file(s) updated.');
+        expect(res.stdout).toContain(
+            'src/flows.spec.ts  checkAllKeys  $node inserted: $,id,ns,gid,sid,uid,lock,meta,next,type,error,stereo,createdAt,deletedAt,updatedAt',
+        );
+        expect(res.stdout).toContain(
+            'src/mock.spec.ts  checkAllKeys  $mock inserted: id,ns,gid,sid,uid,lock,meta,next,type,error,stereo,createdAt,deletedAt,updatedAt',
+        );
+        expect(flows).toContain(
+            `expect2(() => $node?.sort((a, b) => a.length - b.length || a.localeCompare(b)).join(',')).toEqual(`,
+        );
+        expect(flows).toContain(`'$,id,ns,gid,sid,uid,lock,meta,next,type,error,stereo,createdAt,deletedAt,updatedAt'`);
+        expect(mock).toContain(
+            `expect2(() => $mock?.sort((a, b) => a.length - b.length || a.localeCompare(b)).join(',')).toEqual(`,
+        );
+        expect(mock).toContain(`'id,ns,gid,sid,uid,lock,meta,next,type,error,stereo,createdAt,deletedAt,updatedAt'`);
+
+        const noop = instance(root, ['guard-common']);
+        expect(noop.code).toBe(0);
+        expect(noop.stdout).toContain('[lemon-fields] guard-common — 0 guard(s), 0 file(s) updated.');
+    });
+
     //* paths option
     it('should pass gen --paths while keeping imported model type context', () => {
         const root = makeTmpProject({

@@ -13,3 +13,4 @@
 export * from './environ';
 export * from './tools';
 export * from './fields/validate';
+export * from './fields/common-fields';

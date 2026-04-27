@@ -199,3 +199,41 @@ export interface MigrateResult {
     /** tsconfig plugin 정리가 수행되었거나 dry-run에서 수행 예정이면 true */
     updatedTsconfig?: boolean;
 }
+
+/**
+ * type: `GuardCommonOptions`
+ * - `lemon-fields guard-common`에서 transformer spec의 common field guard를 삽입/갱신하는 옵션.
+ */
+export interface GuardCommonOptions {
+    /** tsconfig 경로. 절대경로 또는 cwd 기준 상대경로 */
+    tsconfig: string;
+    /** scan 대상 glob. 기본값은 spec 파일 glob */
+    paths?: string[];
+    /** 찾을 함수/변수명. 기본값은 `checkAllKeys` */
+    targetName: string;
+    /** source 파일을 쓰지 않고 변경 결과만 계산 */
+    dryRun: boolean;
+    /** 변경될 source diff를 결과에 포함할지 여부 */
+    diff?: boolean;
+    /** 프로젝트 root. 기본값은 dirname(tsconfig) */
+    cwd?: string;
+}
+
+/**
+ * type: `GuardCommonResult`
+ * - `lemon-fields guard-common` 실행 결과.
+ */
+export interface GuardCommonResult {
+    /** 삽입/갱신된 guard 목록 */
+    guards: Array<{
+        relPath: string;
+        targetName: string;
+        varName: string;
+        expected: string;
+        action: 'inserted' | 'updated';
+    }>;
+    /** source가 변경된 파일의 절대 경로 목록 */
+    changedFiles: string[];
+    /** 변경될 source diff */
+    diffs?: string[];
+}
