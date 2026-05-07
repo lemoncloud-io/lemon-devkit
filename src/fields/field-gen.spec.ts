@@ -94,6 +94,10 @@ const fieldMap = (res: ReturnType<typeof runGen>): Record<string, string[]> =>
     Object.fromEntries(
         [...res.entries].sort((a, b) => a.name.localeCompare(b.name)).map(({ name, fields }) => [name, [...fields]]),
     );
+const sortedFieldMap = (res: ReturnType<typeof runGen>): Record<string, string[]> =>
+    Object.fromEntries(
+        Object.entries(fieldMap(res)).map(([name, fields]) => [name, [...fields].sort((a, b) => a.localeCompare(b))]),
+    );
 const legacyTypeMap = (res: ReturnType<typeof runGen>): Record<string, { fields: string[]; legacy: boolean }> =>
     Object.fromEntries(
         [...res.entries]
@@ -293,6 +297,58 @@ describe('runGen', () => {
             const res = fx.run();
 
             expect2(() => fieldMap(res)).toEqual({ abcMix: ['a', 'shared', 'b', 'c'] });
+        });
+
+        it('should pass CoreModel intersection and predictable utility type resolution', () => {
+            const fx = instance({
+                'src/model.ts': `
+                    export type ModelType = 'social';
+                    export type CoreModel<T> = {
+                        id: string;
+                        ns: string;
+                        _id: string;
+                        type?: T;
+                        createdAt?: number;
+                    };
+
+                    export type IntersectionModel = CoreModel<ModelType> & { cid?: string };
+
+                    export interface ExtendedModel extends CoreModel<ModelType> {
+                        cid?: string;
+                    }
+
+                    export type OmitModel = Omit<CoreModel<ModelType>, '_id'> & { cid?: string };
+                    export type BaseModel = CoreModel<ModelType>;
+                    export type AliasIntersectionModel = BaseModel & { cid?: string };
+                    export type PartialModel = Partial<CoreModel<ModelType>> & { cid?: string };
+                `,
+                'src/index.ts': `
+                    import { fieldKeys } from './generated/field-registry';
+                    import {
+                        AliasIntersectionModel,
+                        ExtendedModel,
+                        IntersectionModel,
+                        OmitModel,
+                        PartialModel,
+                    } from './model';
+
+                    export const A = fieldKeys.intersectionModel<IntersectionModel>();
+                    export const B = fieldKeys.extendedModel<ExtendedModel>();
+                    export const C = fieldKeys.omitModel<OmitModel>();
+                    export const D = fieldKeys.aliasIntersectionModel<AliasIntersectionModel>();
+                    export const E = fieldKeys.partialModel<PartialModel>();
+                `,
+            });
+
+            const res = fx.run();
+
+            expect2(() => sortedFieldMap(res)).toEqual({
+                aliasIntersectionModel: ['_id', 'cid', 'createdAt', 'id', 'ns', 'type'],
+                extendedModel: ['_id', 'cid', 'createdAt', 'id', 'ns', 'type'],
+                intersectionModel: ['_id', 'cid', 'createdAt', 'id', 'ns', 'type'],
+                omitModel: ['cid', 'createdAt', 'id', 'ns', 'type'],
+                partialModel: ['_id', 'cid', 'createdAt', 'id', 'ns', 'type'],
+            });
         });
 
         it('should pass distinct registry names for the same interface', () => {

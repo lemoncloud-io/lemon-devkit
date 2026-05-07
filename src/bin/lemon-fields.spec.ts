@@ -12,6 +12,7 @@ import * as path from 'path';
 
 import { bootstrapStub } from '../fields/field-gen';
 import { main } from './lemon-fields';
+import { vi, expect, it, describe } from 'vitest';
 
 const makeTmpProject = (files: Record<string, string>): string => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'lemon-fields-cli-'));
@@ -267,6 +268,42 @@ describe('lemon-fields CLI', () => {
         const noop = instance(root, ['guard-common']);
         expect(noop.code).toBe(0);
         expect(noop.stdout).toContain('[lemon-fields] guard-common — 0 guard(s), 0 file(s) updated.');
+    });
+
+    it('should pass guard-common using registry fields for project-specific common fields', () => {
+        const root = makeTmpProject({
+            'tsconfig.json': TSCONFIG,
+            'src/generated/field-registry.ts': [
+                `export const fieldKeys = {`,
+                `    chatsModel: <T extends object>() =>`,
+                `        ["id", "ns", "_id", "cid", "gid", "sid", "uid", "lock", "next", "type", "error", "stereo", "createdAt", "deletedAt", "updatedAt"] as Array<Extract<keyof T, string>>,`,
+                `} as const;`,
+            ].join('\n'),
+            'src/chats/transformer.spec.ts': [
+                `import { expect2 } from 'lemon-core';`,
+                `import { fieldKeys } from '../generated/field-registry';`,
+                `type Model = { id: string; ns: string; cid?: string; gid: string };`,
+                `const filterFields = (fields: string[], base: string[] = []) => base.concat(fields.filter(field => field !== '_id'));`,
+                `const $mock = filterFields(fieldKeys.chatsModel<Model>(), ['meta']);`,
+                `describe('x', () => {`,
+                `    const notInModel = (fields: string[]) => fields.filter(s => !$mock.includes(s));`,
+                `    const checkAllKeys = (model: object, fields: string[]) => {`,
+                `        const keys = Object.keys(model);`,
+                `        const alls = notInModel(fields);`,
+                `        return alls.filter(k => !keys.includes(k));`,
+                `    };`,
+                `});`,
+            ].join('\n'),
+        });
+
+        const res = instance(root, ['guard-common', '--report']);
+        const spec = fs.readFileSync(path.join(root, 'src/chats/transformer.spec.ts'), 'utf8');
+        const expected = 'id,ns,cid,gid,sid,uid,lock,meta,next,type,error,stereo,createdAt,deletedAt,updatedAt';
+
+        expect(res.code).toBe(0);
+        expect(res.stderr).toBe('');
+        expect(res.stdout).toContain(`src/chats/transformer.spec.ts  checkAllKeys  $mock inserted: ${expected}`);
+        expect(spec).toContain(`'${expected}'`);
     });
 
     //* paths option
