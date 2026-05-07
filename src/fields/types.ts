@@ -207,6 +207,8 @@ export interface MigrateResult {
 export interface GuardCommonOptions {
     /** tsconfig 경로. 절대경로 또는 cwd 기준 상대경로 */
     tsconfig: string;
+    /** generated field registry 경로. 절대경로 또는 cwd 기준 상대경로 */
+    out?: string;
     /** scan 대상 glob. 기본값은 spec 파일 glob */
     paths?: string[];
     /** 찾을 함수/변수명. 기본값은 `checkAllKeys` */

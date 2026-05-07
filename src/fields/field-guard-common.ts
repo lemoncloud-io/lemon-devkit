@@ -21,6 +21,7 @@ const CANDIDATE_VAR_RE = /^\$(node|mock|temp)$/;
 
 const toPosix = (p: string): string => p.split(path.sep).join('/');
 const relPathOf = (cwd: string, abs: string): string => toPosix(path.relative(cwd, abs));
+const stripQuotes = (s: string): string => s.replace(/^['"]|['"]$/g, '');
 
 const renderDiff = (relPath: string, before: string, after: string): string => {
     const beforeLines = before.split('\n');
@@ -103,6 +104,149 @@ const includesDollarFromInitializer = (decl: VariableDeclaration | undefined): b
     return includesDollarFromArrayLiteral(args[1]);
 };
 
+const resolveRelativeModule = (fromFile: string, spec: string): string | undefined => {
+    if (!spec.startsWith('.')) return undefined;
+    const resolved = path.resolve(path.dirname(fromFile), spec);
+    return path.extname(resolved) ? resolved : `${resolved}.ts`;
+};
+
+const registryBindingsFor = (sf: SourceFile, outAbs: string): Set<string> => {
+    const bindings = new Set<string>();
+    for (const decl of sf.getImportDeclarations()) {
+        const resolved = resolveRelativeModule(sf.getFilePath(), decl.getModuleSpecifierValue());
+        if (!resolved || path.normalize(resolved) !== path.normalize(outAbs)) continue;
+        for (const spec of decl.getNamedImports()) {
+            if (spec.getName() === 'fieldKeys') bindings.add(spec.getAliasNode()?.getText() ?? 'fieldKeys');
+        }
+    }
+    return bindings;
+};
+
+const readRegistryFields = (project: Project, outAbs: string): Map<string, string[]> => {
+    const result = new Map<string, string[]>();
+    if (!fs.existsSync(outAbs)) return result;
+
+    const sf = project.addSourceFileAtPathIfExists(outAbs);
+    const fieldKeys = sf
+        ?.getDescendantsOfKind(SyntaxKind.VariableDeclaration)
+        .find(decl => decl.getNameNode().getText() === 'fieldKeys');
+    const init = fieldKeys?.getInitializer();
+    const obj =
+        init?.asKind(SyntaxKind.ObjectLiteralExpression) ??
+        init?.asKind(SyntaxKind.AsExpression)?.getExpression().asKind(SyntaxKind.ObjectLiteralExpression);
+    if (!obj) return result;
+
+    for (const prop of obj.getProperties()) {
+        if (!Node.isPropertyAssignment(prop)) continue;
+        const name = stripQuotes(prop.getName());
+        const arr = prop.getInitializer()?.getDescendantsOfKind(SyntaxKind.ArrayLiteralExpression)[0];
+        if (!arr) continue;
+        const fields = arr.getElements().map(el => stripQuotes(el.getText()));
+        result.set(name, fields);
+    }
+    return result;
+};
+
+const fieldKeyNamesFromInitializer = (decl: VariableDeclaration | undefined, bindings: Set<string>): string[] => {
+    const init = decl?.getInitializer();
+    if (!init || bindings.size === 0) return [];
+    return init.getDescendantsOfKind(SyntaxKind.CallExpression).flatMap(call => {
+        const expr = call.getExpression();
+        if (!Node.isPropertyAccessExpression(expr)) return [];
+        if (!Node.isIdentifier(expr.getExpression())) return [];
+        if (!bindings.has(expr.getExpression().getText())) return [];
+        return [expr.getName()];
+    });
+};
+
+const literalFieldsFromInitializer = (decl: VariableDeclaration | undefined): string[] => {
+    const init = decl?.getInitializer();
+    if (!init) return [];
+    return init.getDescendantsOfKind(SyntaxKind.ArrayLiteralExpression).flatMap(arr =>
+        arr.getElements().flatMap(el => {
+            const text = el.getText();
+            return /^['"].*['"]$/.test(text) ? [stripQuotes(text)] : [];
+        }),
+    );
+};
+
+const functionTextInSource = (sf: SourceFile, name: string): string | undefined => {
+    const fn = sf.getFunctions().find(x => x.getName() === name);
+    if (fn) return fn.getText();
+
+    const decl = sf.getDescendantsOfKind(SyntaxKind.VariableDeclaration).find(x => x.getNameNode().getText() === name);
+    return decl?.getText();
+};
+
+const importedFunctionText = (sf: SourceFile, project: Project, name: string): string | undefined => {
+    for (const decl of sf.getImportDeclarations()) {
+        const spec = decl.getNamedImports().find(x => (x.getAliasNode()?.getText() ?? x.getName()) === name);
+        if (!spec) continue;
+
+        const resolved = resolveRelativeModule(sf.getFilePath(), decl.getModuleSpecifierValue());
+        if (!resolved || !fs.existsSync(resolved)) continue;
+        const target = project.getSourceFile(resolved) ?? project.addSourceFileAtPathIfExists(resolved);
+        const text = target ? functionTextInSource(target, spec.getName()) : undefined;
+        if (text) return text;
+    }
+    return undefined;
+};
+
+const filterFunctionExcludesId = (text: string | undefined): boolean =>
+    Boolean(
+        text &&
+            /(?:field|[_a-zA-Z][_a-zA-Z0-9]*)\s*!={1,2}\s*['"]_id['"]|['"]_id['"]\s*!={1,2}\s*(?:field|[_a-zA-Z][_a-zA-Z0-9]*)/.test(
+                text,
+            ),
+    );
+
+const baseInitializerExcludesId = (
+    project: Project,
+    sf: SourceFile,
+    decl: VariableDeclaration | undefined,
+): boolean => {
+    const init = decl?.getInitializer();
+    if (!init) return false;
+
+    const call = init.asKind(SyntaxKind.CallExpression);
+    const calls = call
+        ? [call, ...init.getDescendantsOfKind(SyntaxKind.CallExpression)]
+        : init.getDescendantsOfKind(SyntaxKind.CallExpression);
+    return calls.some(call => {
+        const expr = call.getExpression();
+        if (!Node.isIdentifier(expr)) return false;
+        const name = expr.getText();
+        const text = functionTextInSource(sf, name) ?? importedFunctionText(sf, project, name);
+        return filterFunctionExcludesId(text);
+    });
+};
+
+const unique = (xs: readonly string[]): string[] =>
+    xs.reduce<string[]>((L, x) => {
+        if (!L.includes(x)) L.push(x);
+        return L;
+    }, []);
+
+const expectedFieldsForBaseVar = (
+    project: Project,
+    sf: SourceFile,
+    baseDecl: VariableDeclaration | undefined,
+    registryFields: Map<string, string[]>,
+    outAbs: string,
+): string[] | undefined => {
+    const bindings = registryBindingsFor(sf, outAbs);
+    const fromRegistry = fieldKeyNamesFromInitializer(baseDecl, bindings).flatMap(
+        name => registryFields.get(name) ?? [],
+    );
+    if (fromRegistry.length === 0) return undefined;
+
+    const initText = baseDecl?.getInitializer()?.getText() ?? '';
+    const fromBase = literalFieldsFromInitializer(baseDecl);
+    const fromCore = /\bCORE_FIELDS\b/.test(initText) ? ['$'] : [];
+    const fields = unique([...fromRegistry, ...fromBase, ...fromCore]);
+    return baseInitializerExcludesId(project, sf, baseDecl) ? fields.filter(field => field !== '_id') : fields;
+};
+
 const renderGuard = (varName: string, expected: string): string =>
     [
         `//* 최소한, 만일 \`keys()\`가 잘 작동했다면, 공통 필드를 가지고 있어야함.`,
@@ -164,7 +308,9 @@ const upsertGuard = (block: Block, varName: string, expected: string): 'inserted
 export const runGuardCommon = (opts: GuardCommonOptions): GuardCommonResult => {
     const cwd = opts.cwd ? path.resolve(opts.cwd) : path.resolve(path.dirname(opts.tsconfig));
     const tsconfigPath = path.resolve(opts.tsconfig);
+    const outAbs = path.resolve(cwd, opts.out ?? 'src/generated/field-registry.ts');
     const project = new Project({ tsConfigFilePath: tsconfigPath });
+    const registryFields = readRegistryFields(project, outAbs);
     const paths = opts.paths && opts.paths.length > 0 ? opts.paths : DEFAULT_PATHS;
     for (const pat of paths) project.addSourceFilesAtPaths(path.isAbsolute(pat) ? pat : path.join(cwd, pat));
 
@@ -189,7 +335,9 @@ export const runGuardCommon = (opts: GuardCommonOptions): GuardCommonResult => {
             if (!varName) continue;
             const baseDecl = findBaseVarDeclaration(sf, varName);
             const includeDollar = includesDollarFromInitializer(baseDecl);
-            const expected = formatCommonFields(DEFAULT_COMMON_MODEL_FIELDS, includeDollar ? {} : { exclude: ['$'] });
+            const expectedFields =
+                expectedFieldsForBaseVar(project, sf, baseDecl, registryFields, outAbs) ?? DEFAULT_COMMON_MODEL_FIELDS;
+            const expected = formatCommonFields(expectedFields, includeDollar ? {} : { exclude: ['$'] });
             const action = upsertGuard(block, varName, expected);
             if (!action) continue;
             changedFiles.add(sf.getFilePath());

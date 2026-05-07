@@ -96,6 +96,7 @@ npx lemon-fields guard-common --report
 ```
 
 이 명령은 `src/**/*.spec.ts`에서 `checkAllKeys`를 찾고, 공통필드 검증 블록이 없으면 자동으로 넣는다.
+`fieldKeys` base는 registry 기준으로 맞춘다.
 
 개발자는 보통 `test:watch` 앞에 붙여두면 된다.
 
@@ -119,7 +120,7 @@ npx lemon-fields guard-common --report
 [lemon-fields] guard-common — 0 guard(s), 0 file(s) updated.
 ```
 
-`$` 포함 여부는 spec의 base field 변수에서 자동 판별한다. `CORE_FIELDS`를 쓰면 `$`를 포함하고, `['meta']`처럼 `$`가 없는 base를 쓰면 `$`를 제외한다.
+`$` 포함 여부는 spec의 base field 변수에서 자동 판별한다. `CORE_FIELDS`를 쓰면 `$`를 포함하고, `['meta']`처럼 `$`가 없는 base를 쓰면 `$`를 제외한다. `_id` 필터도 감지한다.
 
 ## package.json 예시
 
@@ -379,6 +380,7 @@ expect2(() => commons?.sort((a, b) => a.length - b.length || a.localeCompare(b))
 - `--paths <glob>`: 특정 spec 파일만 대상으로 제한
 - `--target <name>`: 기본값 `checkAllKeys`
 - `--report`: 삽입/갱신된 guard 위치와 expected 문자열 출력
+- `--out <path>`: registry 기준 field 확인
 
 ## Common field guard
 
@@ -403,13 +405,14 @@ npx lemon-fields guard-common --report
 이렇게 해두면 동작은 단순하다.
 
 - guard가 없으면 최초 1회 spec 파일에 자동 삽입
-- guard가 이미 있으면 no-op
+- guard가 이미 맞으면 no-op
+- expected가 다르면 자동 갱신
 - 그 다음 기존 `jest --watchAll` 실행
-- 이후 공통필드가 바뀌면 watch test가 실패하므로 개발자가 literal 문자열을 갱신
 
 ### `$` 포함 여부
 
 개발자가 `$` 포함 여부를 직접 맞출 필요는 없다. `guard-common`이 현재 spec의 base field 변수를 보고 expected 문자열을 고른다.
+`fieldKeys` base는 registry field를 사용한다.
 
 예를 들어 `CORE_FIELDS`를 base로 쓰는 경우는 `$`를 포함한다.
 
@@ -437,6 +440,7 @@ id,ns,gid,sid,uid,lock,meta,next,type,error,stereo,createdAt,deletedAt,updatedAt
 ```
 
 즉 repo마다 `$` 포함 여부를 사람이 맞추지 않아도 된다.
+`filterFields(... _id 제외)`도 반영한다.
 
 ### test:watch에 연결
 
@@ -807,7 +811,7 @@ const FIELDS = keys<User>(); // 기대: ['id', 'name'], 실제: []
 - 빈 타입 처리: property가 0개인 타입은 실패 대신 `[]` 생성
 - meta/validation: `fieldRegistryMeta`, checksum, bootstrap meta 생성
 - runtime validator: `assertFieldRegistry`와 `validateFieldRegistry`의 오류 검출
-- common field guard: `$` 포함 여부를 base 변수에서 판단하고 `checkAllKeys` guard 삽입
+- common field guard: registry base, `$`, `_id` 필터를 반영하고 `checkAllKeys` guard 삽입/갱신
 
 ## 내부 파일 구조
 

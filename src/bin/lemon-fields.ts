@@ -242,6 +242,7 @@ const runGuardCommonCmd = (flags: ParsedArgs['flags']): number => {
     const common = commonOpts(flags);
     const res = runGuardCommon({
         tsconfig: common.tsconfig,
+        out: common.out,
         paths: common.paths,
         targetName: flags.target ?? 'checkAllKeys',
         dryRun: Boolean(flags['dry-run']),
