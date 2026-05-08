@@ -72,9 +72,18 @@ CI에는 `npm run fields:check`를 추가하는 것을 권장한다.
 
 ----------------
 
+## Proxy
+
+`lemon-devkit@0.0.12`부터 install/upgrade 시 consumer project의 `docs/proxy-implementation-guide.md`와 `README.md`에 proxy 구현 가이드를 자동 반영한다.
+Proxy 기능을 추가하거나 변경할 때는 [proxy implementation guide](docs/proxy-implementation-guide.md)를 먼저 확인한다.
+`BackendProxy`, `ManagerProxy`, `guardProxy()` 계열 동작과 프로젝트 적용 절차를 이 문서 기준으로 맞춘다.
+
+----------------
+
 ## VERSION INFO
 
 | Version   | Description
 |--         |--
+| 0.0.12    | added proxy development documentation.
 | 0.0.6     | optimized `loadProfile()` w/o async.
 | 0.0.4     | initial release.
