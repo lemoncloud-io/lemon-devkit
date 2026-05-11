@@ -40,9 +40,7 @@ describe('proxy docs installer', () => {
         expect(readme).toContain(
             'install/upgrade 시 consumer project의 `docs/proxy-implementation-guide.md`와 `README.md`',
         );
-        expect(readme).toContain(
-            '[lemon-devkit proxy implementation guide](docs/proxy-implementation-guide.md)',
-        );
+        expect(readme).toContain('[lemon-devkit proxy implementation guide](docs/proxy-implementation-guide.md)');
         expect(readme).toContain('Proxy 기능을 추가하거나 변경할 때');
     });
 

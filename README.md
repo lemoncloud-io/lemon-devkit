@@ -84,6 +84,6 @@ Proxy 기능을 추가하거나 변경할 때는 [proxy implementation guide](do
 
 | Version   | Description
 |--         |--
-| 0.0.12    | added proxy development documentation.
+| 0.0.13    | added proxy development documentation.
 | 0.0.6     | optimized `loadProfile()` w/o async.
 | 0.0.4     | initial release.

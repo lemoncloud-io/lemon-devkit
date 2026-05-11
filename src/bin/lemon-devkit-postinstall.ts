@@ -21,7 +21,9 @@ export const main = (): number => {
     try {
         const res = installProxyDocs({ projectRoot, packageRoot });
         if (res.copied || res.readmeUpdated) {
-            process.stdout.write('[lemon-devkit] installed proxy implementation guide: docs/proxy-implementation-guide.md\n');
+            process.stdout.write(
+                '[lemon-devkit] installed proxy implementation guide: docs/proxy-implementation-guide.md\n',
+            );
         }
         return 0;
     } catch (e) {
