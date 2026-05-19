@@ -591,7 +591,9 @@ describe('runGen', () => {
                 bSame: ['id', 'b'],
                 same: ['id', 'a'],
             });
-            expect2(() => res.repairs).toEqual([{ relPath: 'src/b/model.ts', name: 'bSame', typeArgText: 'LocalModel' }]);
+            expect2(() => res.repairs).toEqual([
+                { relPath: 'src/b/model.ts', name: 'bSame', typeArgText: 'LocalModel' },
+            ]);
         });
 
         it('should fail empty scan by default', () => {
