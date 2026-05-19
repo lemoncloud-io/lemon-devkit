@@ -68,6 +68,8 @@ export interface GenOptions {
     allowLegacy: boolean;
     /** 호출 위치가 없어도 실패하지 않고 bootstrap stub을 반환할지 여부 */
     allowEmpty: boolean;
+    /** divergent duplicate registry name을 source callsite rewrite로 자동 보정할지 여부 */
+    repairDuplicateNames?: boolean;
     /** 프로젝트 root. 기본값은 dirname(tsconfig) */
     cwd?: string;
 }
@@ -106,6 +108,10 @@ export interface GenResult {
     skipped: FieldSiteSkip[];
     /** 스캔 중 발견한 legacy `keys<T>()` 호출 위치 */
     legacyLeftovers: Array<Omit<FieldSiteSkip, 'reason'>>;
+    /** `gen` 중 자동 보정된 duplicate registry name 호출 위치 */
+    repairs: FieldRewrite[];
+    /** source가 변경된 파일의 절대 경로 목록 */
+    changedFiles: string[];
 }
 
 /**

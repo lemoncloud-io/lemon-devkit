@@ -212,6 +212,33 @@ describe('lemon-fields CLI', () => {
         expect(res.stdout).toContain('catalogModel  src/a.ts#CatalogModel  fields(2): id, public');
     });
 
+    it('should repair duplicate registry names during gen', () => {
+        const root = makeTmpProject({
+            'tsconfig.json': TSCONFIG,
+            'src/generated/field-registry.ts': bootstrapStub(),
+            'src/cores/abstract-services.spec.ts': [
+                `import { fieldKeys } from '../generated/field-registry';`,
+                `interface TestModel { name: string; test: boolean }`,
+                `export const A = fieldKeys.testModel<TestModel>();`,
+            ].join('\n'),
+            'src/modules/mock/model.ts': [
+                `import { fieldKeys } from '../../generated/field-registry';`,
+                `interface TestModel { name: string; count: number }`,
+                `export const B = fieldKeys.testModel<TestModel>();`,
+            ].join('\n'),
+        });
+
+        const res = instance(root, ['gen', '--report']);
+        const repaired = fs.readFileSync(path.join(root, 'src/modules/mock/model.ts'), 'utf8');
+
+        expect(res.code).toBe(0);
+        expect(res.stderr).toBe('');
+        expect(res.stdout).toContain('[lemon-fields] repaired 1 duplicate registry name(s):');
+        expect(res.stdout).toContain('src/modules/mock/model.ts  -> fieldKeys.mockTestModel<TestModel>()');
+        expect(res.stdout).toContain('mockTestModel  src/modules/mock/model.ts#TestModel');
+        expect(repaired).toContain('fieldKeys.mockTestModel<TestModel>()');
+    });
+
     it('should pass guard-common with `$` adjusted from checkAllKeys base variable', () => {
         const root = makeTmpProject({
             'tsconfig.json': TSCONFIG,

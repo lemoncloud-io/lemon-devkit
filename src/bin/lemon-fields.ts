@@ -164,15 +164,16 @@ const runGenCmd = (flags: ParsedArgs['flags']): number => {
     const common = commonOpts(flags);
     const cwd = process.cwd();
     const outAbs = path.resolve(cwd, common.out);
+    const isCheck = Boolean(flags['check']);
 
     const res = runGen({
         ...common,
         allowLegacy: Boolean(flags['allow-legacy']),
         allowEmpty: Boolean(flags['allow-empty']),
+        repairDuplicateNames: !isCheck,
         cwd,
     });
 
-    const isCheck = Boolean(flags['check']);
     if (isCheck) {
         if (res.changed) {
             process.stderr.write(
@@ -188,6 +189,12 @@ const runGenCmd = (flags: ParsedArgs['flags']): number => {
     process.stdout.write(
         `[lemon-fields] gen — ${res.entries.length} entries, ${res.changed ? 'wrote' : 'no change to'} ${common.out}\n`,
     );
+    if (res.repairs.length > 0) {
+        process.stdout.write(`[lemon-fields] repaired ${res.repairs.length} duplicate registry name(s):\n`);
+        for (const r of res.repairs) {
+            process.stdout.write(`  ${r.relPath}  -> fieldKeys.${r.name}<${r.typeArgText}>()\n`);
+        }
+    }
     if (flags['report']) writeGenReport(res.entries, res.content);
     if (res.skipped.length > 0) {
         process.stderr.write(`[lemon-fields] skipped ${res.skipped.length} site(s):\n`);
