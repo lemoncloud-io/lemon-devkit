@@ -514,56 +514,84 @@ describe('runGen', () => {
             });
         });
 
-        it('should fail divergent registry names across different models', () => {
+        it('should repair divergent duplicate registry names across different models', () => {
             const fx = instance({
                 'src/model.ts': `
                     export interface Mine { a: string; b: string }
                     export interface Ours { x: string; y: string }
                 `,
-                'src/a.ts': `
-                    import { fieldKeys } from './generated/field-registry';
-                    import { Mine } from './model';
+                'src/a/model.ts': `
+                    import { fieldKeys } from '../generated/field-registry';
+                    import { Mine } from '../model';
                     export const A = fieldKeys.same<Mine>();
                 `,
-                'src/b.ts': `
-                    import { fieldKeys } from './generated/field-registry';
-                    import { Ours } from './model';
+                'src/b/model.ts': `
+                    import { fieldKeys } from '../generated/field-registry';
+                    import { Ours } from '../model';
                     export const B = fieldKeys.same<Ours>();
                 `,
             });
 
-            expect2(() => fx.runErr()).toEqual(
+            const res = fx.run();
+            const repaired = fs.readFileSync(path.join(fx.root, 'src/b/model.ts'), 'utf8');
+
+            expect2(() => fieldMap(res)).toEqual({
+                bSame: ['x', 'y'],
+                same: ['a', 'b'],
+            });
+            expect2(() => res.repairs).toEqual([{ relPath: 'src/b/model.ts', name: 'bSame', typeArgText: 'Ours' }]);
+            expect(repaired).toContain('fieldKeys.bSame<Ours>()');
+        });
+
+        it('should fail divergent duplicate registry names when repair is disabled', () => {
+            const fx = instance({
+                'src/model.ts': `
+                    export interface Mine { a: string; b: string }
+                    export interface Ours { x: string; y: string }
+                `,
+                'src/a/model.ts': `
+                    import { fieldKeys } from '../generated/field-registry';
+                    import { Mine } from '../model';
+                    export const A = fieldKeys.same<Mine>();
+                `,
+                'src/b/model.ts': `
+                    import { fieldKeys } from '../generated/field-registry';
+                    import { Ours } from '../model';
+                    export const B = fieldKeys.same<Ours>();
+                `,
+            });
+
+            expect2(() => fx.runErr({ repairDuplicateNames: false })).toEqual(
                 [
                     'duplicate registry name `same` with divergent field sets:',
-                    '  - src/a.ts :: Mine -> [a, b]',
-                    '  - src/b.ts :: Ours -> [x, y]',
+                    '  - src/a/model.ts :: Mine -> [a, b]',
+                    '  - src/b/model.ts :: Ours -> [x, y]',
                     'Hand-edit one of the call sites to a distinct name.',
                 ].join('\n'),
             );
         });
 
-        it('should fail divergent local types even when the type text is the same', () => {
+        it('should repair divergent local types even when the type text is the same', () => {
             const fx = instance({
-                'src/a.ts': `
-                    import { fieldKeys } from './generated/field-registry';
+                'src/a/model.ts': `
+                    import { fieldKeys } from '../generated/field-registry';
                     interface LocalModel { id: string; a: string }
                     export const A = fieldKeys.same<LocalModel>();
                 `,
-                'src/b.ts': `
-                    import { fieldKeys } from './generated/field-registry';
+                'src/b/model.ts': `
+                    import { fieldKeys } from '../generated/field-registry';
                     interface LocalModel { id: string; b: string }
                     export const B = fieldKeys.same<LocalModel>();
                 `,
             });
 
-            expect2(() => fx.runErr()).toEqual(
-                [
-                    'duplicate registry name `same` with divergent field sets:',
-                    '  - src/a.ts :: LocalModel -> [id, a]',
-                    '  - src/b.ts :: LocalModel -> [id, b]',
-                    'Hand-edit one of the call sites to a distinct name.',
-                ].join('\n'),
-            );
+            const res = fx.run();
+
+            expect2(() => fieldMap(res)).toEqual({
+                bSame: ['id', 'b'],
+                same: ['id', 'a'],
+            });
+            expect2(() => res.repairs).toEqual([{ relPath: 'src/b/model.ts', name: 'bSame', typeArgText: 'LocalModel' }]);
         });
 
         it('should fail empty scan by default', () => {

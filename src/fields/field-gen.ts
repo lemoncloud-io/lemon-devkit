@@ -17,7 +17,7 @@ import * as fs from 'fs';
 import * as crypto from 'crypto';
 import { Node, Project, SourceFile, SyntaxKind } from 'ts-morph';
 
-import { deriveName } from './field-derive-name';
+import { deriveName, prefixWithPath } from './field-derive-name';
 import type { DerivationInput, FieldRegistryMeta, GenOptions, GenResult, RegistryEntry } from './types';
 
 export type { GenOptions, GenResult, RegistryEntry } from './types';
@@ -219,6 +219,7 @@ const scanFile = (sf: SourceFile, cwd: string, outAbs: string, outputRelPath: st
                     fields,
                     relPath,
                     call,
+                    context: enclosingContextOf(call),
                     reason: fields === null ? 'type checker failed to materialise property names' : undefined,
                 });
                 continue;
@@ -354,8 +355,12 @@ export const runGen = (opts: GenOptions): GenResult => {
 
     const skipped: GenResult['skipped'] = [];
     const legacyLeftovers: GenResult['legacyLeftovers'] = [];
+    const repairs: GenResult['repairs'] = [];
+    const changedFiles = new Set<string>();
 
     const migratedByName = new Map<string, RegistryEntry>();
+    const takenNames = new Set<string>();
+    const repairDuplicateNames = opts.repairDuplicateNames !== false;
     for (const hit of hits) {
         if (hit.kind === 'migrated') {
             if (!hit.fields) {
@@ -370,14 +375,41 @@ export const runGen = (opts: GenOptions): GenResult => {
             //* 같은 key + 같은 fields는 중복 호출로 허용 가능.
             //* 같은 key + 다른 fields는 생성 결과가 모호하므로 실패 처리.
             if (prior && !sameFields(prior.fields, hit.fields)) {
-                throw new Error(
-                    `duplicate registry name \`${hit.name}\` with divergent field sets:\n` +
-                        `  - ${prior.relPath} :: ${prior.typeArgText} -> [${prior.fields.join(', ')}]\n` +
-                        `  - ${hit.relPath} :: ${hit.typeArgText} -> [${hit.fields.join(', ')}]\n` +
-                        `Hand-edit one of the call sites to a distinct name.`,
-                );
+                if (!repairDuplicateNames) {
+                    throw new Error(
+                        `duplicate registry name \`${hit.name}\` with divergent field sets:\n` +
+                            `  - ${prior.relPath} :: ${prior.typeArgText} -> [${prior.fields.join(', ')}]\n` +
+                            `  - ${hit.relPath} :: ${hit.typeArgText} -> [${hit.fields.join(', ')}]\n` +
+                            `Hand-edit one of the call sites to a distinct name.`,
+                    );
+                }
+                const input: DerivationInput = {
+                    relPath: hit.relPath,
+                    typeArgText: hit.typeArgText,
+                    enclosingContext: hit.context,
+                };
+                const prefixed = prefixWithPath(hit.name, hit.relPath);
+                const repairedName =
+                    prefixed !== hit.name && !takenNames.has(prefixed) ? prefixed : deriveName(input, takenNames);
+                takenNames.add(repairedName);
+                const regBinding = findRegistryBinding(hit.call.getSourceFile(), outAbs);
+                hit.call
+                    .asKindOrThrow(SyntaxKind.CallExpression)
+                    .getExpression()
+                    .replaceWithText(`${regBinding?.localName ?? 'fieldKeys'}.${repairedName}`);
+                changedFiles.add(hit.call.getSourceFile().getFilePath());
+                repairs.push({ relPath: hit.relPath, name: repairedName, typeArgText: hit.typeArgText });
+                migratedByName.set(repairedName, {
+                    name: repairedName,
+                    fields: hit.fields,
+                    relPath: hit.relPath,
+                    typeArgText: hit.typeArgText,
+                    legacy: false,
+                });
+                continue;
             }
             if (!prior) {
+                takenNames.add(hit.name);
                 migratedByName.set(hit.name, {
                     name: hit.name,
                     fields: hit.fields,
@@ -402,7 +434,7 @@ export const runGen = (opts: GenOptions): GenResult => {
         }
     } else {
         //* STEP.3B migration 진행 중 호환 모드. 여기서 만든 이름은 임시값으로 본다.
-        const taken = new Set<string>(migratedByName.keys());
+        const taken = new Set<string>(takenNames);
         for (const hit of hits) {
             if (hit.kind !== 'legacy') continue;
             if (!hit.fields) {
@@ -442,7 +474,22 @@ export const runGen = (opts: GenOptions): GenResult => {
     const existing = fs.existsSync(outAbs) ? fs.readFileSync(outAbs, 'utf8') : undefined;
     const changed = existing !== content;
 
-    return { entries, content, existing, changed, skipped, legacyLeftovers };
+    if (changedFiles.size > 0) {
+        for (const sf of project.getSourceFiles()) {
+            if (changedFiles.has(sf.getFilePath())) sf.saveSync();
+        }
+    }
+
+    return {
+        entries,
+        content,
+        existing,
+        changed,
+        skipped,
+        legacyLeftovers,
+        repairs,
+        changedFiles: Array.from(changedFiles),
+    };
 };
 
 const sameFields = (a: string[], b: string[]): boolean => a.length === b.length && a.every((v, i) => v === b[i]);
