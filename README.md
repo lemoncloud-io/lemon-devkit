@@ -4,7 +4,7 @@ local develop kit for [lemon-core](https://github.com/lemoncloud-io/lemon-core)
 
 ## Usage
 
-- required to install seperately `lemon-core` in advance.
+- required to install seperately `lemon-core` in advance. (recommended to use `4.2.x` version)
 
 ```sh
 # STEP.1 install `lemon-devkit`
@@ -40,13 +40,13 @@ npm i --save-dev lemon-devkit
 #### 2. migration 명령어 실행
 
 ```sh
-npm i --save-dev lemon-devkit@0.0.13
+npm i --save-dev lemon-devkit@0.2.0
 npm run fields:migrate
 npm run fields:gen
 npm run fields:guard-common
 ```
 
-- `npm i --save-dev lemon-devkit@0.0.13`: project에 `lemon-devkit` 0.0.13를 dev dependency로 설치
+- `npm i --save-dev lemon-devkit@0.2.0`: project에 `lemon-devkit` 0.2.0를 dev dependency로 설치
 - `npm run fields:migrate`: 기존 `keys<T>()` 호출을 `fieldKeys.<name><T>()`로 변환하고 `ts-transformer-keys` transformer plugin 제거
 - `npm run fields:gen`: TypeScript checker로 field 목록을 읽어 `src/generated/field-registry.ts` 생성
 - `npm run fields:guard-common`: transformer spec의 `checkAllKeys`에 공통 모델 필드 검증 삽입/갱신
@@ -74,7 +74,7 @@ CI에는 `npm run fields:check`를 추가하는 것을 권장한다.
 
 ## Proxy
 
-`lemon-devkit@0.0.13`부터 install/upgrade 시 consumer project의 `docs/proxy-implementation-guide.md`와 `README.md`에 proxy 구현 가이드를 자동 반영한다.
+`lemon-devkit@0.2.0`부터 install/upgrade 시 consumer project의 `docs/proxy-implementation-guide.md`와 `README.md`에 proxy 구현 가이드를 자동 반영한다.
 Proxy 기능을 추가하거나 변경할 때는 [proxy implementation guide](docs/proxy-implementation-guide.md)를 먼저 확인한다.
 `BackendProxy`, `ManagerProxy`, `guardProxy()` 계열 동작과 프로젝트 적용 절차를 이 문서 기준으로 맞춘다.
 
@@ -84,6 +84,7 @@ Proxy 기능을 추가하거나 변경할 때는 [proxy implementation guide](do
 
 | Version   | Description
 |--         |--
-| 0.0.13    | added proxy development documentation.
+| 0.2.0     | optimized with `lemon-core@4.2.x`.
+| 0.2.0    | added proxy development documentation.
 | 0.0.6     | optimized `loadProfile()` w/o async.
 | 0.0.4     | initial release.
