@@ -110,7 +110,7 @@ export const buildExpress = (
         const profile = $engine.environ('PROFILE', NAME) as string;
         // const credentials = new AWS.SharedIniFileCredentials({ profile });
         // if (profile) AWS.config.credentials = credentials;
-        return asyncCredentials(profile).catch((e: Error): CrendentialForAWS => {
+        return asyncCredentials(profile).catch((e: Error): CrendentialForAWS | undefined => {
             const error = `${e?.message ?? e}`.toLowerCase();
             if (error.includes('could not resolve credentials') && error.includes('[default]')) return;
             throw e;
@@ -166,10 +166,10 @@ export const buildExpress = (
                 identity: {
                     sourceIp,
                     userAgent,
-                    cognitoIdentityPoolId: null as string,
-                    apiKey: undefined as string, // api-key if applicable.
-                    caller: undefined as string, // caller string like AROXXXXXX
-                    accessKey: undefined as string, // access-key used to sign
+                    cognitoIdentityPoolId: null as unknown as string,
+                    apiKey: undefined as unknown as string, // api-key if applicable.
+                    caller: undefined as unknown as string, // caller string like AROXXXXXX
+                    accessKey: undefined as unknown as string, // access-key used to sign
                 },
             },
         };

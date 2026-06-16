@@ -57,8 +57,8 @@ export const loadJsonSync = <T extends object = any>(name: string, def = {}): T 
     try {
         const rawdata = fs.readFileSync(name);
         return JSON.parse(rawdata.toString()) as T;
-    } catch (e) {
-        if (def && typeof def === 'object') (def as any).error = `${e.message || e}`;
+    } catch (e: any) {
+        if (def && typeof def === 'object') (def as any).error = `${e?.message || e}`;
         return def as T;
     }
 };
