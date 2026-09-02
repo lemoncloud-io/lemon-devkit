@@ -551,6 +551,75 @@ describe('runGen', () => {
             });
         });
 
+        it('should pass schemaVersion bump: changed=true even though field-set/checksum/entryCount are identical (D4b)', () => {
+            const fx = instance({
+                'src/model.ts': `export interface UserModel { id: string; name: string; age: number }`,
+                'src/index.ts': `
+                    import { fieldKeys } from './generated/field-registry';
+                    import { UserModel } from './model';
+                    export const FIELDS = fieldKeys.userModel<UserModel>();
+                `,
+            });
+            const outAbs = path.join(fx.root, 'src/generated/field-registry.ts');
+
+            //* 1st gen: raw generator 출력을 그대로 기록한다.
+            const first = fx.run();
+            writeRegistry(outAbs, first.content);
+
+            //* consumer가 devkit을 업그레이드해 생성 스키마가 2로 올라간 상황을 재현한다 —
+            //* checksum/entryCount/field-set은 그대로 두고 schemaVersion만 bump한다.
+            const bumped = fs.readFileSync(outAbs, 'utf8').replace(/("schemaVersion":\s*)1(,)/, '$12$2');
+            expect(bumped).not.toBe(first.content); // schemaVersion 치환이 실제로 바이트를 바꿨는지 자가검증
+            fs.writeFileSync(outAbs, bumped, 'utf8');
+
+            //* 필드셋 변경 없이 다시 gen — checksum/entryCount는 동일해도 schemaVersion 불일치는 의미 변경으로 취급돼야 한다.
+            const second = fx.run();
+
+            expect2(
+                () => ({ changed: second.changed, formatOnly: second.formatOnly }),
+                'changed,formatOnly',
+            ).toEqual({
+                changed: true,
+                formatOnly: false,
+            });
+        });
+
+        it('should pass D4-era meta missing schemaVersion entirely: checksum/entryCount match but conservative changed=true', () => {
+            const fx = instance({
+                'src/model.ts': `export interface UserModel { id: string; name: string; age: number }`,
+                'src/index.ts': `
+                    import { fieldKeys } from './generated/field-registry';
+                    import { UserModel } from './model';
+                    export const FIELDS = fieldKeys.userModel<UserModel>();
+                `,
+            });
+            const outAbs = path.join(fx.root, 'src/generated/field-registry.ts');
+
+            //* 1st gen: raw generator 출력을 그대로 기록한다.
+            const first = fx.run();
+            writeRegistry(outAbs, first.content);
+
+            //* D4 이전(schemaVersion 필드 자체가 없던) 파일을 재현한다 — checksum/entryCount는 그대로 두고
+            //* `schemaVersion` key만 통째로 제거한다.
+            const withoutSchemaVersion = fs
+                .readFileSync(outAbs, 'utf8')
+                .replace(/\s*"schemaVersion":\s*1,/, '');
+            expect(withoutSchemaVersion).not.toBe(first.content); // 제거가 실제로 바이트를 바꿨는지 자가검증
+            expect(withoutSchemaVersion).not.toMatch(/schemaVersion/);
+            fs.writeFileSync(outAbs, withoutSchemaVersion, 'utf8');
+
+            //* checksum/entryCount는 동일해도 schemaVersion을 못 읽으면(undefined) 보수적으로 changed=true여야 한다.
+            const second = fx.run();
+
+            expect2(
+                () => ({ changed: second.changed, formatOnly: second.formatOnly }),
+                'changed,formatOnly',
+            ).toEqual({
+                changed: true,
+                formatOnly: false,
+            });
+        });
+
         it('should pass legacy file without parsable meta: conservative changed=true, formatOnly=false', () => {
             const fx = instance(
                 {
