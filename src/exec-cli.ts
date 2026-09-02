@@ -11,38 +11,168 @@
  * @author      Steve Jung <steve@lemoncloud.io>
  * @date        2019-08-01 initial optimized via `imweb-forms-api/run.js`
  * @date        2025-05-20 optimize for `lemon-core#v4`
+ * @date        2026-09-02 refactor for import-safety (D1) - no top-level side-effects.
  *
  * @copyright (C) lemoncloud.io 2025 - All Rights Reserved.
  */
 import request from 'request';
+import { getRunParam, loadJsonSync } from './tools/shared';
 
 /** ********************************************************************************************************************
- *  boot loading for global instance manager
+ *  lazy engine loader.
+ *
+ *  NOTE - `lemon-core`'s `TS`/`LC` log-decoration flags are captured ONCE, synchronously, the very
+ *  first time `lemon-core` is `require()`-d in the process:
+ *    - `lemon-core/dist/engine/index.js:39`  -> `exports.$engine = buildEngine(global, { env: process.env });`
+ *      (this line runs unconditionally when `lemon-core` is first loaded - see the file's own
+ *      comment: "if loading this index.ts, it will trigger `bootloader` in `/engine`.")
+ *    - `lemon-core/dist/engine/builder.js:193-194` -> inside `buildEngine()`:
+ *          `const TS = _environ('TS', '1') === '1';`
+ *          `const LC = _environ('LC', ...) === '1';`
+ *      these two booleans are baked into the `$console` object once, and `_log/_inf/_err`
+ *      (built via `build_log($console)` etc.) close over that fixed `$console` forever after -
+ *      i.e. import-time-fixed, NOT re-read per log call.
+ *    - by contrast, `lemon-core/dist/engine/utilities.js:285` (`Utilities.NS()`) does
+ *      `const LC = this.env('LC', '0') === '1';` - this one IS re-read on every call, so the
+ *      colorizing of the `NS` label itself is dynamic and import-order-independent.
+ *  Net effect: to preserve the original CLI's exact log decoration (colorized + timestamped),
+ *  `process.env.TS/LC` MUST be set before the FIRST EVER `require('lemon-core')` in the process.
+ *  Since the original file set env (lines 23-24) textually before `import ... from 'lemon-core'`
+ *  (line 27) - and this project compiles with `"module": "commonjs"`, where TS preserves the
+ *  source order of `import`-turned-`require()` calls relative to plain statements - that ordering
+ *  was exactly this trick. We keep the same guarantee here by deferring the engine load to a
+ *  lazily-memoized `require('lemon-core')` call, invoked only from inside `bootstrap()` (or other
+ *  call-sites), AFTER `process.env` has been assigned. This keeps `import * as cli from './exec-cli'`
+ *  itself free of any env/log/argv/package.json side-effects (see `exec-cli.spec.ts`).
+ *
+ *  NOTE (`.port` validation) - the original also imported `loadJsonSync` FROM `lemon-core`
+ *  (`dist/tools/tools.js:39` - `(name, def={}) => { name = !name.startsWith('./') ? './'+name : name;
+ *  try { return JSON.parse(fs.readFileSync(name).toString()); } catch(e){ ...; return def; } }`).
+ *  That is byte-for-byte the same implementation as this project's own `./tools/shared.ts#loadJsonSync`
+ *  (verified by inspection), so `package.json` loading below uses the local one instead - this makes
+ *  it a plain, side-effect-free, statically-`import`-able (hence easily mockable) function, without
+ *  needing to load the `lemon-core` engine at all just to read a JSON file.
  ** *******************************************************************************************************************/
-//* override envrionment.
-const $env = { TS: '1', LC: '1' };
-process.env = Object.assign(process.env, $env);
+export interface LemonCoreLike {
+    $U: {
+        N: (x: any, def: number) => number;
+        NS: (ns: string, color?: string, len?: number, delim?: string) => string;
+    };
+    _log: (...args: any[]) => void;
+    _inf: (...args: any[]) => void;
+    _err: (...args: any[]) => void;
+}
 
-//* - load engine after `process.env`
-import { $U, _log, _inf, _err, loadJsonSync } from 'lemon-core';
-import { getRunParam } from './tools/shared';
+let _lemonCore: LemonCoreLike | undefined;
+/** load (and memoize) the real `lemon-core` engine. caller controls *when* this first happens. */
+const lemonCore = (): LemonCoreLike => {
+    if (!_lemonCore) {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        _lemonCore = require('lemon-core');
+    }
+    return _lemonCore as LemonCoreLike;
+};
 
-//* - initial values.
-const NS = $U.NS('EXEC', 'cyan');
-const $pack = loadJsonSync('package.json');
+let _NS: string | undefined;
+const getNS = (): string => {
+    if (_NS === undefined) _NS = lemonCore().$U.NS('EXEC', 'cyan');
+    return _NS as string;
+};
 
-const NAME = $pack.name || 'LEMON API';
-const VERS = $pack.version || '0.0.0';
-const PORT = $U.N($pack.port, 0); // default server port.
-if (!PORT) throw new Error('.port is required at package.json!');
-_log(NS, `###### exec[${NAME}@${$U.NS(VERS, 'cyan')}${PORT}] ######`);
+/** ********************************************************************************************************************
+ *  config.
+ ** *******************************************************************************************************************/
+export interface Pack {
+    name?: string;
+    version?: string;
+    port?: number;
+}
+
+export interface Config {
+    NAME: string;
+    VERS: string;
+    PORT: number;
+    ENDPOINT: string;
+    METHOD: string;
+    EP: string;
+    ID: string;
+    IPP: number;
+    WAIT: number;
+    SID: string;
+    CMD: string;
+    OPT: string;
+    PAGE: number;
+    MAX: number;
+}
+
+/**
+ * parse the batch-run configuration.
+ * - pure function: `argv`/`pack` are explicit inputs (were `process.argv` / CWD `package.json`).
+ * - NOTE: `PORT` here is `Number(pack.port) || 0`, not `$U.N(pack.port, 0)` - for real package.json
+ *   input (`port` is always a JSON number) both are equivalent, and keeping this pure avoids
+ *   needing `lemon-core` (hence env/import ordering) just to parse config. see `exec-cli.spec.ts`.
+ */
+export const parseConfig = (argv: string[], pack: Pack): Config => {
+    const $arg = (o: string, defval: boolean | number | string | object) => getRunParam(o, defval, argv);
+    const NAME = pack.name || 'LEMON API';
+    const VERS = pack.version || '0.0.0';
+    const PORT = Number(pack.port) || 0; // default server port.
+    const ENDPOINT = `http://localhost:${PORT}`;
+    const METHOD = $arg('m', 'GET') as string;
+    const EP = $arg('ep', '') as string;
+    const ID = $arg('id', '0') as string;
+    const IPP = $arg('ipp', 0) as number;
+    const WAIT = $arg('wait', 1000) as number;
+    const SID = $arg('sid', '') as string;
+    const CMD = $arg('cmd', '') as string;
+    const OPT = $arg('opt', '') as string;
+    const [PAGE, MAX] = ((): number[] => {
+        let page: any = $arg('page', '');
+        let max: any = $arg('max', 1);
+        if (`${page}`.indexOf('~') > 0) {
+            const pages = `${page}`.split('~').map((_: string) => _.trim());
+            page = parseInt(pages[0]) || 0;
+            max = parseInt(pages[1]) || 0;
+        } else {
+            page = Number(page);
+            max = Number(max);
+        }
+        return [page, max];
+    })();
+    return { NAME, VERS, PORT, ENDPOINT, METHOD, EP, ID, IPP, WAIT, SID, CMD, OPT, PAGE, MAX };
+};
+
+/**
+ * bootstrap - env override -> package.json load -> PORT validation (throws) -> log.
+ * - only runs its side-effects when actually invoked (by `run()`, or by `run_batch(that)`'s
+ *   1-arg back-compat fallback) - never merely by importing this module.
+ */
+export const bootstrap = (): Config => {
+    //* override environment - MUST run before the first `lemonCore()` call (see note above).
+    const $env = { TS: '1', LC: '1' };
+    process.env = Object.assign(process.env, $env);
+
+    //* - load package.json (local `loadJsonSync` - no `lemon-core` needed for this).
+    const $pack: Pack = loadJsonSync('package.json');
+    const config = parseConfig(process.argv, $pack);
+    if (!config.PORT) throw new Error('.port is required at package.json!');
+
+    //* - load engine only now (env already set) - for logging only.
+    const { $U, _log } = lemonCore();
+    const NS = getNS();
+    _log(NS, `###### exec[${config.NAME}@${$U.NS(config.VERS, 'cyan')}${config.PORT}] ######`);
+    _log(NS, 'PAGE ~ MAX =', config.PAGE, '~', config.MAX);
+    return config;
+};
 
 /** ********************************************************************************************************************
  *  main application
  ** *******************************************************************************************************************/
-//* do run http
-const do_http = (options: any) => {
+//* do run http. `reqFn` is injectable (default: real `request`) so tests never hit the network.
+export const do_http = (options: any, reqFn: typeof request = request): Promise<any> => {
     if (!options || !options.uri) return Promise.reject(new Error('invalid options'));
+    const { _inf, _err } = lemonCore();
+    const NS = getNS();
     // const cookies = $cm.prepare(options.uri);
     options.headers = options.headers || {};
     // _log(NS, '! options =', options);
@@ -53,7 +183,7 @@ const do_http = (options: any) => {
     // options.headers.Cookie = (options.headers.Cookie||'') + (options.headers.Cookie ? '; ':'') + cookies;
     return new Promise((resolve, reject) => {
         _inf(NS, options.method, options.uri);
-        request(options, (error: any, res: any, body: any) => {
+        reqFn(options, (error: any, res: any, body: any) => {
             if (error) {
                 _err(NS, '!ERR=', error);
                 return reject(error);
@@ -82,10 +212,10 @@ const do_http = (options: any) => {
 };
 
 //* prepare request(json) options
-const prepare_json = function (method: string, path: string, qs: any, body: any) {
+export const prepare_json = function (method: string, path: string, qs: any, body: any) {
     method = method || 'GET';
     if (!path) throw Error('path is required!');
-    const options = {
+    const options: any = {
         method,
         uri: path,
         json: true,
@@ -94,14 +224,17 @@ const prepare_json = function (method: string, path: string, qs: any, body: any)
     };
     // if (body) options.body = typeof body == 'object' ? JSON.stringify(body) : body;
     if (body) options.method = 'POST';
-    body && _inf(NS, '> json.body =', JSON.stringify(body));
+    if (body) {
+        const { _inf } = lemonCore();
+        _inf(getNS(), '> json.body =', JSON.stringify(body));
+    }
     return options;
 };
 
 //* wait some
-const wait_sometime = (that: any, time: number) => {
+export const wait_sometime = (that: any, time: number): Promise<any> => {
     time = time || 1500;
-    return new Promise((resolve, reject) => {
+    return new Promise(resolve => {
         setTimeout(() => {
             resolve(that);
         }, time);
@@ -111,6 +244,11 @@ const wait_sometime = (that: any, time: number) => {
 /** ********************************************************************************************************************
  *  main batch configuration.
  ** *******************************************************************************************************************/
+export interface RunBatchCtx {
+    config?: Config;
+    http?: (options: any) => Promise<any>;
+}
+
 /**
  * page로 하는, 배치 작업을 한번에 실행 시키기..
  *
@@ -118,33 +256,13 @@ const wait_sometime = (that: any, time: number) => {
  * # example
  * $ node . -ep user -sid lemon -cmd test-self -opt 'force=1' -page 1 -max 2
  */
-//* batch-run
-const ENDPOINT = `http://localhost:${PORT}`;
-const METHOD = getRunParam('m', 'GET') as string;
-const EP = getRunParam('ep', '');
-const ID = getRunParam('id', '0');
-const IPP = getRunParam('ipp', 0) as number;
-const WAIT = getRunParam('wait', 1000) as number;
-const SID = getRunParam('sid', '');
-const CMD = getRunParam('cmd', '');
-const OPT = getRunParam('opt', '');
-const [PAGE, MAX] = ((): number[] => {
-    let page = getRunParam('page', '');
-    let max = getRunParam('max', 1);
-    if (`${page}`.indexOf('~') > 0) {
-        const pages = `${page}`.split('~').map((_: string) => _.trim());
-        page = parseInt(pages[0]) || 0;
-        max = parseInt(pages[1]) || 0;
-    } else {
-        page = Number(page);
-        max = Number(max);
-    }
-    return [page, max];
-})();
-_log(NS, 'PAGE ~ MAX =', PAGE, '~', MAX);
+//* the actual recursive loop - always carries the SAME resolved (config, http) through recursion
+//* so bootstrap()/env-set/package.json-load/log only ever happen once per top-level call.
+const runBatchLoop = async (that: any, config: Config, httpFn: (options: any) => Promise<any>): Promise<any> => {
+    const { $U, _log, _inf, _err } = lemonCore();
+    const NS = getNS();
+    const { ENDPOINT, EP, ID, CMD, SID, METHOD, IPP, OPT, WAIT, MAX } = config;
 
-//* execute page by page.
-export const run_batch = async (that: any): Promise<any> => {
     //* invoke http(json).
     const my_chain_run_page = (that: any) => {
         const page = $U.N(that.page, -1);
@@ -164,7 +282,7 @@ export const run_batch = async (that: any): Promise<any> => {
             null,
             Object.keys(body).length ? body : null,
         );
-        return do_http(req).then((_: any) => {
+        return httpFn(req).then((_: any) => {
             _.layout && _log(NS, '! that[' + page + '].layout =', _.layout);
             _.range && _log(NS, '! that[' + page + '].range =', _.range);
             _.list && _log(NS, '! that[' + page + '].list =', _.list); // if has list.
@@ -193,7 +311,7 @@ export const run_batch = async (that: any): Promise<any> => {
                 return list;
             }
             that.page = page2;
-            return run_batch(that);
+            return runBatchLoop(that, config, httpFn);
         })
         .catch(e => {
             _err(NS, '!ERR! FIN=', e);
@@ -201,7 +319,17 @@ export const run_batch = async (that: any): Promise<any> => {
         });
 };
 
+//* execute page by page. `ctx` is optional: {config, http} - omit either/both to fall back to
+//* `bootstrap()` (real env/package.json/engine) and the real `do_http` (network `request`), i.e.
+//* the exact original behavior for 1-arg callers (deep-import compat: `dist/exec-cli.js`).
+export const run_batch = async (that: any, ctx?: RunBatchCtx): Promise<any> => {
+    const config = ctx?.config ?? bootstrap();
+    const httpFn = ctx?.http ?? do_http;
+    return runBatchLoop(that, config, httpFn);
+};
+
 //* export.
-export const run = () => {
-    run_batch({ page: PAGE });
+export const run = (): void => {
+    const config = bootstrap();
+    run_batch({ page: config.PAGE }, { config });
 };
