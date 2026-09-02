@@ -212,9 +212,31 @@ const saved = await proxy.test.set(test.id, validated);
 - 저장 반영 여부 (`guardProxy()` 종료 후 `service.$<domain>.find/retrieve`로 확인)
 - 헤더는 공통 spec 패턴 사용:
 
+> 2026-09-02 현행화: `src/cores/`(L2 템플릿 층)가 lemon-core 4.3.0에 내재화됨에 따라
+> 프로젝트가 미전환/전환 두 상태 중 하나일 수 있다. **판별 규칙**: `src/cores/abstract-services.ts`가
+> 존재하면 미전환 — 아래 (A)를 쓴다. 그 파일이 없고 `package.json`의 `lemon-core` 핀이
+> `4.3.0` 이상이면 전환 후 — 아래 (B)를 쓴다. lemon-core 4.3.0+ 배포물(dist)은
+> `tsconfig.json` exclude(`**/src/**/*.spec.ts`) + `package.json#files: ["dist/**/*"]`로
+> `.spec.ts`를 배제하므로 `commons.spec`을 가져오는 경로 자체가 존재하지 않는다 —
+> `_it`/`expect2`/`GETERR`은 lemon-core가 루트에서 공개 export하는 `src/common/test-helper.ts`
+> 구현(동일 시그니처)으로 대체됐다. `describe`/`it`/`expect`는 애초에 lemon-core 소속이 아니라
+> 테스트 러너 자체이므로 프로젝트가 실제 쓰는 러너 패키지에서 가져온다.
+
 ```ts
+// (A) 미전환 — 로컬 src/cores/가 있는 프로젝트: 기존과 동일
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 import { _it, describe, it, expect2, expect, GETERR } from '../../cores/commons.spec';
+import * as $service from '../../service/backend-service.spec';
+
+//* load target use-case function to verify.
+import { myUseCase } from './my-use-case';
+```
+
+```ts
+// (B) 전환 후 — src/cores/ 없음 + lemon-core ^4.3.0
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+import { describe, expect, it } from 'vitest'; // 프로젝트의 실제 테스트 러너로 교체 (jest 등)
+import { _it, expect2, GETERR } from 'lemon-core';
 import * as $service from '../../service/backend-service.spec';
 
 //* load target use-case function to verify.
@@ -594,7 +616,15 @@ Spec 작성 규칙:
 
 ### guardProxy()
 
-- 위치: `src/cores/abstract-services.ts` (대개)
+> 2026-09-02 현행화: `src/cores/`가 lemon-core 4.3.0에 내재화됨에 따라 소재가 두 상태로
+> 나뉜다. 판별 규칙은 STEP 7의 spec import 판별과 동일하다.
+
+- 위치:
+  - (미전환 — `src/cores/abstract-services.ts` 존재) `src/cores/abstract-services.ts` (대개)
+  - (전환 후 — `src/cores/` 부재 + `package.json`의 `lemon-core` 핀 `4.3.0` 이상) lemon-core의
+    `MyCoreService.guardProxy()` — 정의는 `lemon-core/src/extended/cores/abstract-services.ts`,
+    루트 `lemon-core`에서 공개 export되어(`export * from './extended/cores/'`) 프로젝트의
+    `BackendService`가 상속한다.
 - 시그니처: `guardProxy<T>(context: NextContext, callback: (proxy: Proxy) => Promise<T>): Promise<T>`
 - 동작: proxy 생성 → callback 실행 → 종료 시 `saveAllUpdates()` 자동 호출
 - 규칙:
