@@ -102,8 +102,20 @@ export interface GenResult {
     content: string;
     /** 기존 output 파일 내용. 파일이 없으면 undefined */
     existing?: string;
-    /** `content !== existing` 이면 true */
+    /**
+     * 의미(필드셋/checksum) 변경 여부.
+     * - `existing`의 `fieldRegistryMeta`(checksum + entryCount)를 새 `entries`의 checksum과 비교해 판단한다.
+     * - 파일이 없거나 메타를 파싱할 수 없으면(구형 파일) 보수적으로 `true`.
+     * - 필드셋이 같고 바이트만 다르면(포맷 차이) `false` — 이 경우 `formatOnly`가 `true`.
+     */
     changed: boolean;
+    /**
+     * 얕은 포맷 검사 결과.
+     * - `true`: 필드셋/checksum은 동일하지만 `existing`의 바이트가 generator raw 출력과 다름
+     *   (예: consumer repo가 prettier로 재포맷해 커밋한 경우).
+     * - `changed`가 `true`이면 항상 `false`(의미 변경이 우선).
+     */
+    formatOnly: boolean;
     /** 타입 property 이름을 materialise 하지 못한 호출 위치 */
     skipped: FieldSiteSkip[];
     /** 스캔 중 발견한 legacy `keys<T>()` 호출 위치 */

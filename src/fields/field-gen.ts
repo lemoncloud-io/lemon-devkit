@@ -44,11 +44,39 @@ export const canonicalEntries = (entries: RegistryEntry[]): string =>
 
 const sha256First16 = (input: string): string => crypto.createHash('sha256').update(input).digest('hex').slice(0, 16);
 
+/** 생성 registry meta의 현재 schema 버전. 의미 변경 시에만 bump한다 — bootstrapStub/renderRegistry가 함께 참조. */
+export const REGISTRY_SCHEMA_VERSION = 1;
+
+/**
+ * 기존 output 파일 raw text에서 `fieldRegistryMeta`의 `checksum` + `entryCount` + `schemaVersion`을 뽑아낸다.
+ *
+ * **왜 정규식인가**
+ * - consumer repo가 prettier로 재포맷하면 key가 bare(`checksum:`)로, 값 quote가 `'`로 바뀔 수 있다.
+ *   ts-morph로 파싱하는 대안(`field-guard-common.ts`의 `readRegistryFields`)도 있으나,
+ *   이 비교는 파일 존재 여부·checksum 두 값만 필요하므로 project 로드 없이 정규식으로 충분하다.
+ * - 두 key 표기(`"checksum"` / `checksum`)와 두 quote 종류(`"` / `'`)를 모두 받아야 한다.
+ *   못 받으면 옛 raw-compare 위양성이 다른 표기로 재발한다.
+ * - 매치 실패 시 `undefined`를 반환해 호출부가 안전하게 `changed=true`로 폴백하게 한다.
+ * - `schemaVersion`은 D4 이전 구형 파일에는 없을 수 있으므로 못 찾으면 `undefined`로 둔다 —
+ *   호출부가 그 경우도 보수적으로 `changed=true`로 폴백한다.
+ */
+const parseExistingRegistryMeta = (
+    text: string,
+): { checksum: string; entryCount: number; schemaVersion: number | undefined } | undefined => {
+    const checksumMatch = text.match(/(?:"checksum"|'checksum'|checksum)\s*:\s*(?:"([0-9a-f]*)"|'([0-9a-f]*)')/);
+    const entryCountMatch = text.match(/(?:"entryCount"|'entryCount'|entryCount)\s*:\s*(\d+)/);
+    if (!checksumMatch || !entryCountMatch) return undefined;
+    const checksum = checksumMatch[1] ?? checksumMatch[2] ?? '';
+    const schemaVersionMatch = text.match(/(?:"schemaVersion"|'schemaVersion'|schemaVersion)\s*:\s*(\d+)/);
+    const schemaVersion = schemaVersionMatch ? Number(schemaVersionMatch[1]) : undefined;
+    return { checksum, entryCount: Number(entryCountMatch[1]), schemaVersion };
+};
+
 /** bootstrap stub 파일 내용을 생성 */
 export const bootstrapStub = (): string => {
     const meta: FieldRegistryMeta = {
         kind: 'bootstrap',
-        schemaVersion: 1,
+        schemaVersion: REGISTRY_SCHEMA_VERSION,
         entryCount: 0,
         checksum: '',
         generatedBy: 'lemon-fields',
@@ -286,7 +314,7 @@ export const renderRegistry = (entries: RegistryEntry[]): string => {
     const checksum = sha256First16(canonicalEntries(entries));
     const meta: FieldRegistryMeta = {
         kind: 'concrete',
-        schemaVersion: 1,
+        schemaVersion: REGISTRY_SCHEMA_VERSION,
         entryCount: entries.length,
         checksum,
         generatedBy: 'lemon-fields',
@@ -472,7 +500,20 @@ export const runGen = (opts: GenOptions): GenResult => {
 
     const content = entries.length > 0 ? renderRegistry(entries) : bootstrapStub();
     const existing = fs.existsSync(outAbs) ? fs.readFileSync(outAbs, 'utf8') : undefined;
-    const changed = existing !== content;
+
+    //* 의미(필드셋/checksum) 비교 — bootstrap(entries 없음)의 checksum은 sha256이 아니라 `''`로 고정됨(bootstrapStub 참고).
+    const expectedChecksum = entries.length > 0 ? sha256First16(canonicalEntries(entries)) : '';
+    const existingMeta = existing !== undefined ? parseExistingRegistryMeta(existing) : undefined;
+    const semanticMatch =
+        existingMeta !== undefined &&
+        existingMeta.checksum === expectedChecksum &&
+        existingMeta.entryCount === entries.length &&
+        existingMeta.schemaVersion === REGISTRY_SCHEMA_VERSION;
+
+    //* changed = 의미 변경(필드셋/checksum 차이, 신규 파일, 메타 파싱 불가 모두 보수적으로 true).
+    //* formatOnly = 의미는 동일하지만 raw byte가 generator 출력과 다름(예: consumer의 prettier 재포맷).
+    const changed = !semanticMatch;
+    const formatOnly = semanticMatch && existing !== content;
 
     if (changedFiles.size > 0) {
         for (const sf of project.getSourceFiles()) {
@@ -485,6 +526,7 @@ export const runGen = (opts: GenOptions): GenResult => {
         content,
         existing,
         changed,
+        formatOnly,
         skipped,
         legacyLeftovers,
         repairs,

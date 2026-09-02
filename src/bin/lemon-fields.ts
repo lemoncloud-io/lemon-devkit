@@ -181,14 +181,28 @@ const runGenCmd = (flags: ParsedArgs['flags']): number => {
             );
             return 1;
         }
+        if (res.formatOnly) {
+            //* 필드셋/checksum은 동일 — on-disk 포맷(예: prettier 재포맷)만 다름. 의미 변경이 아니므로 CI는 통과시킨다.
+            process.stdout.write(
+                `[lemon-fields] format differs from generator output; content up-to-date — ${res.entries.length} entries.\n`,
+            );
+            return 0;
+        }
         process.stdout.write(`[lemon-fields] ok — ${res.entries.length} entries up-to-date.\n`);
         return 0;
     }
 
+    //* 의미 변경(changed) 시에만 쓴다. 포맷만 다르면(formatOnly) 쓰지 않는다 — 그렇지 않으면
+    //* prettier 등 consumer repo의 포맷터와 매번 덮어쓰기 경합이 생긴다.
     if (res.changed) writeRegistry(outAbs, res.content);
     process.stdout.write(
         `[lemon-fields] gen — ${res.entries.length} entries, ${res.changed ? 'wrote' : 'no change to'} ${common.out}\n`,
     );
+    if (!res.changed && res.formatOnly) {
+        process.stdout.write(
+            `[lemon-fields] note — on-disk format differs from generator output but fields are unchanged; leaving file as-is.\n`,
+        );
+    }
     if (res.repairs.length > 0) {
         process.stdout.write(`[lemon-fields] repaired ${res.repairs.length} duplicate registry name(s):\n`);
         for (const r of res.repairs) {
