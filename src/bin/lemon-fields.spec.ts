@@ -190,6 +190,44 @@ describe('lemon-fields CLI', () => {
         expect(ok.stderr).toBe('');
     });
 
+    //* check drift guard — false-positive fix: 포맷만 다르면(prettier 재포맷) exit 0, gen도 덮어쓰지 않음.
+    it('should pass gen --check exit 0 and gen no-overwrite when only format differs (WP-D4)', () => {
+        const root = makeTmpProject({
+            'tsconfig.json': TSCONFIG,
+            'src/generated/field-registry.ts': bootstrapStub(),
+            'src/model.ts': `export interface UserModel { id: string; name: string }`,
+            'src/a.ts': [
+                `import { fieldKeys } from './generated/field-registry';`,
+                `import { UserModel } from './model';`,
+                `export const F = fieldKeys.userModel<UserModel>();`,
+            ].join('\n'),
+        });
+        const out = path.join(root, 'src/generated/field-registry.ts');
+
+        const gen = instance(root, ['gen']);
+        expect(gen.code).toBe(0);
+        const raw = fs.readFileSync(out, 'utf8');
+
+        //* consumer repo가 prettier로 재포맷해서 커밋한 상황을 재현 — meta의 key를 bare로, 값은 작은따옴표로.
+        const reformatted = raw.replace(/"(\w+)":/g, '$1:').replace(/"([^"]*)"/g, "'$1'");
+        expect(reformatted).not.toBe(raw);
+        fs.writeFileSync(out, reformatted, 'utf8');
+
+        const check = instance(root, ['--check']);
+        expect(check.code).toBe(0);
+        expect(check.stderr).toBe('');
+        expect(check.stdout).toContain('format differs from generator output; content up-to-date');
+
+        const regen = instance(root, ['gen']);
+        expect(regen.code).toBe(0);
+        expect(regen.stdout).toContain('gen — 1 entries, no change to src/generated/field-registry.ts');
+        expect(regen.stdout).toContain(
+            'note — on-disk format differs from generator output but fields are unchanged; leaving file as-is.',
+        );
+        //* 파일이 raw generator 출력으로 덮어써지지 않고 재포맷된 상태 그대로 유지되어야 한다.
+        expect(fs.readFileSync(out, 'utf8')).toBe(reformatted);
+    });
+
     it('should pass gen --report output format', () => {
         const root = makeTmpProject({
             'tsconfig.json': TSCONFIG,

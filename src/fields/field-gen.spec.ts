@@ -470,6 +470,187 @@ describe('runGen', () => {
         });
     });
 
+    //* changed/formatOnly: 포맷-불변 checksum 비교로 위양성(false-positive drift) 방지. WP-D4.
+    describe('changed / formatOnly detection (format-invariant checksum compare)', () => {
+        //* renderRegistry() raw 출력을 prettier 스타일(작은따옴표·다중행 배열·meta bare key)로 재포맷한다.
+        //* 필드/checksum 값 자체는 건드리지 않는다 — 순수 포맷 변형만 재현한다.
+        const reformatAsPrettier = (raw: string): string => {
+            let out = raw.replace(/"(\w+)":/g, '$1:'); // meta 객체 key를 bare로
+            out = out.replace(/"([^"]*)"/g, "'$1'"); // 남은 문자열 값(필드 리터럴 + meta 값)을 작은따옴표로
+            out = out.replace(/\[([^\]]*)\] as Array<Extract<keyof T, string>>,/g, (_m, inner: string) => {
+                const items = inner
+                    .split(',')
+                    .map(s => s.trim())
+                    .filter(Boolean);
+                const lines = items.map(i => `            ${i},`).join('\n');
+                return `[\n${lines}\n        ] as Array<Extract<keyof T, string>>,`;
+            });
+            return out;
+        };
+
+        it('should pass false-positive fix: prettier-reformatted output reads as formatOnly, not changed', () => {
+            const fx = instance({
+                'src/model.ts': `export interface UserModel { id: string; name: string; age: number }`,
+                'src/index.ts': `
+                    import { fieldKeys } from './generated/field-registry';
+                    import { UserModel } from './model';
+                    export const FIELDS = fieldKeys.userModel<UserModel>();
+                `,
+            });
+            const outAbs = path.join(fx.root, 'src/generated/field-registry.ts');
+
+            //* 1st gen: raw generator 출력을 그대로 기록한다 (재포맷 전).
+            const first = fx.run();
+            writeRegistry(outAbs, first.content);
+
+            //* consumer repo가 prettier로 재포맷해서 커밋한 상황을 재현한다.
+            const reformatted = reformatAsPrettier(first.content);
+            expect(reformatted).not.toBe(first.content); // 재포맷이 실제로 바이트를 바꿨는지 자가검증
+            fs.writeFileSync(outAbs, reformatted, 'utf8');
+
+            //* 필드셋 변경 없이 다시 gen — checksum/필드셋은 동일하므로 의미 변경은 없어야 한다.
+            const second = fx.run();
+
+            expect2(
+                () => ({ changed: second.changed, formatOnly: second.formatOnly }),
+                'changed,formatOnly',
+            ).toEqual({
+                changed: false,
+                formatOnly: true,
+            });
+        });
+
+        it('should pass real field-set change: changed=true even though meta was parsable', () => {
+            const fx = instance({
+                'src/model.ts': `export interface UserModel { id: string; name: string; age: number }`,
+                'src/index.ts': `
+                    import { fieldKeys } from './generated/field-registry';
+                    import { UserModel } from './model';
+                    export const FIELDS = fieldKeys.userModel<UserModel>();
+                `,
+            });
+            const outAbs = path.join(fx.root, 'src/generated/field-registry.ts');
+            const first = fx.run();
+            writeRegistry(outAbs, first.content);
+
+            //* 실제 필드 추가.
+            fs.writeFileSync(
+                path.join(fx.root, 'src/model.ts'),
+                `export interface UserModel { id: string; name: string; age: number; email: string }`,
+                'utf8',
+            );
+
+            const second = fx.run();
+
+            expect2(
+                () => ({ changed: second.changed, formatOnly: second.formatOnly }),
+                'changed,formatOnly',
+            ).toEqual({
+                changed: true,
+                formatOnly: false,
+            });
+        });
+
+        it('should pass legacy file without parsable meta: conservative changed=true, formatOnly=false', () => {
+            const fx = instance(
+                {
+                    'src/model.ts': `export interface UserModel { id: string; name: string }`,
+                    'src/index.ts': `
+                        import { fieldKeys } from './generated/field-registry';
+                        import { UserModel } from './model';
+                        export const FIELDS = fieldKeys.userModel<UserModel>();
+                    `,
+                },
+                { withRegistry: false },
+            );
+            const outAbs = path.join(fx.root, 'src/generated/field-registry.ts');
+            fs.mkdirSync(path.dirname(outAbs), { recursive: true });
+            //* meta export 자체가 없는 구형 파일(스키마 이전 버전) 시늉.
+            fs.writeFileSync(
+                outAbs,
+                `export const fieldKeys = {\n    userModel: <T extends object>() => ['id', 'name'] as Array<Extract<keyof T, string>>,\n} as const;\n`,
+                'utf8',
+            );
+
+            const res = fx.run();
+
+            expect2(() => ({ changed: res.changed, formatOnly: res.formatOnly }), 'changed,formatOnly').toEqual({
+                changed: true,
+                formatOnly: false,
+            });
+        });
+
+        it('should pass missing output file: changed=true, formatOnly=false', () => {
+            const fx = instance(
+                {
+                    'src/model.ts': `export interface UserModel { id: string; name: string }`,
+                    'src/index.ts': `
+                        import { fieldKeys } from './generated/field-registry';
+                        import { UserModel } from './model';
+                        export const FIELDS = fieldKeys.userModel<UserModel>();
+                    `,
+                },
+                { withRegistry: false },
+            );
+
+            const res = fx.run();
+
+            expect2(() => ({ changed: res.changed, formatOnly: res.formatOnly }), 'changed,formatOnly').toEqual({
+                changed: true,
+                formatOnly: false,
+            });
+        });
+
+        //* lemon-core develop @ HEAD의 실제 prettier 재포맷 registry — 읽기 전용으로 복사한 고정 픽스처.
+        //* source: (읽기만, 커밋 없음) lemon-core clone 'src/generated/field-registry.ts'
+        const LEMON_CORE_PRETTIER_REGISTRY = "// AUTO-GENERATED by lemon-devkit `lemon-fields` \u2014 do not edit manually.\n// Regenerate: lemon-fields gen\nexport const fieldKeys = {\n    // source: src/extended/cores/abstract-services.ts#CoreModel\n    coreModel: <T extends object>() =>\n        [\n            '$',\n            'ns',\n            'type',\n            'stereo',\n            'sid',\n            'uid',\n            'gid',\n            'lock',\n            'next',\n            'meta',\n            'createdAt',\n            'updatedAt',\n            'deletedAt',\n            'error',\n            'id',\n            '_id',\n        ] as Array<Extract<keyof T, string>>,\n    // source: src/extended/cores/abstract-services.spec.ts#MyTestModel\n    myTestModel: <T extends object>() =>\n        [\n            'name',\n            'test',\n            'extra',\n            'Model',\n            '$identity',\n            '$',\n            'ns',\n            'type',\n            'stereo',\n            'sid',\n            'uid',\n            'gid',\n            'lock',\n            'next',\n            'meta',\n            'createdAt',\n            'updatedAt',\n            'deletedAt',\n            'error',\n            'id',\n            '_id',\n        ] as Array<Extract<keyof T, string>>,\n    // source: src/extended/abstract-service.spec.ts#TestModel\n    testModel: <T extends object>() =>\n        [\n            'name',\n            'test',\n            'A',\n            'AB',\n            'A_B',\n            'Model',\n            '$model',\n            'object$',\n            'extra',\n            'keepMe',\n            '$',\n            'ns',\n            'type',\n            'stereo',\n            'sid',\n            'uid',\n            'gid',\n            'lock',\n            'next',\n            'meta',\n            'createdAt',\n            'updatedAt',\n            'deletedAt',\n            'error',\n            'id',\n            '_id',\n        ] as Array<Extract<keyof T, string>>,\n} as const;\n\nexport const fieldRegistryMeta = {\n    kind: 'concrete',\n    schemaVersion: 1,\n    entryCount: 3,\n    checksum: 'f00dc1d624f9c0a3',\n    generatedBy: 'lemon-fields',\n} as const;\n";
+
+        it('should pass lemon-core real prettier-formatted registry as formatOnly, not changed (gate)', () => {
+            const fx = instance(
+                {
+                    'src/model.ts': `
+                        export interface CoreModel {
+                            \$: string; ns: string; type: string; stereo: string; sid: string; uid: string;
+                            gid: string; lock: string; next: string; meta: string; createdAt: string;
+                            updatedAt: string; deletedAt: string; error: string; id: string; _id: string;
+                        }
+                        export interface MyTestModel {
+                            name: string; test: string; extra: string; Model: string; \$identity: string;
+                            \$: string; ns: string; type: string; stereo: string; sid: string; uid: string;
+                            gid: string; lock: string; next: string; meta: string; createdAt: string;
+                            updatedAt: string; deletedAt: string; error: string; id: string; _id: string;
+                        }
+                        export interface TestModel {
+                            name: string; test: string; A: string; AB: string; A_B: string; Model: string;
+                            \$model: string; object\$: string; extra: string; keepMe: string;
+                            \$: string; ns: string; type: string; stereo: string; sid: string; uid: string;
+                            gid: string; lock: string; next: string; meta: string; createdAt: string;
+                            updatedAt: string; deletedAt: string; error: string; id: string; _id: string;
+                        }
+                    `,
+                    'src/a.ts': `
+                        import { fieldKeys } from './generated/field-registry';
+                        import { CoreModel, MyTestModel, TestModel } from './model';
+                        export const A = fieldKeys.coreModel<CoreModel>();
+                        export const B = fieldKeys.myTestModel<MyTestModel>();
+                        export const C = fieldKeys.testModel<TestModel>();
+                    `,
+                },
+                { withRegistry: false },
+            );
+            const outAbs = path.join(fx.root, 'src/generated/field-registry.ts');
+            fs.mkdirSync(path.dirname(outAbs), { recursive: true });
+            fs.writeFileSync(outAbs, LEMON_CORE_PRETTIER_REGISTRY, 'utf8');
+
+            const res = fx.run();
+
+            expect2(() => ({ changed: res.changed, formatOnly: res.formatOnly }), 'changed,formatOnly').toEqual({
+                changed: false,
+                formatOnly: true,
+            });
+        });
+    });
+
     //* throw로 중단되는 케이스.
     describe('error cases', () => {
         it('should fail legacy leftovers by default', () => {
