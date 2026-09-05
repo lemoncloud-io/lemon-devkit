@@ -40,13 +40,13 @@ npm i --save-dev lemon-devkit
 #### 2. migration 명령어 실행
 
 ```sh
-npm i --save-dev lemon-devkit@0.2.0
+npm i --save-dev lemon-devkit@0.2.1
 npm run fields:migrate
 npm run fields:gen
 npm run fields:guard-common
 ```
 
-- `npm i --save-dev lemon-devkit@0.2.0`: project에 `lemon-devkit` 0.2.0를 dev dependency로 설치
+- `npm i --save-dev lemon-devkit@0.2.1`: project에 `lemon-devkit` 0.2.1를 dev dependency로 설치
 - `npm run fields:migrate`: 기존 `keys<T>()` 호출을 `fieldKeys.<name><T>()`로 변환하고 `ts-transformer-keys` transformer plugin 제거
 - `npm run fields:gen`: TypeScript checker로 field 목록을 읽어 `src/generated/field-registry.ts` 생성
 - `npm run fields:guard-common`: transformer spec의 `checkAllKeys`에 공통 모델 필드 검증 삽입/갱신
@@ -76,6 +76,8 @@ CI에는 `npm run fields:check`를 추가하는 것을 권장한다.
 
 | Version   | Description
 |--         |--
+| 0.2.1     | removed proxy implementation guide and its postinstall injector.
+| 0.2.1     | `fields --check` compares registry by checksum/entry-count (incl. schemaVersion); exec-cli import-safe.
 | 0.2.0     | optimized with `lemon-core@4.2.x`.
 | 0.2.0    | added proxy development documentation.
 | 0.0.6     | optimized `loadProfile()` w/o async.
