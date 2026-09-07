@@ -251,6 +251,7 @@ lemon-templates-api@0.26.215
 ```sh
 $ ./node_modules/.bin/lemon-fields migrate --dry-run --report --update-tsconfig
 [lemon-fields] [dry-run] migrate — rewrote 15 site(s), 9 file(s).
+  # 아래 두 줄은 lemon-core 4.3 미전환 프로젝트(src/cores/ 보유) 예시 출력이다
   src/cores/abstract-services.spec.ts  keys<TestModel>() -> fieldKeys.testModel<TestModel>()
   src/cores/abstract-services.ts  keys<CoreModel>() -> fieldKeys.coreModel<CoreModel>()
   src/view/transformer.spec.ts  keys<Model>() -> fieldKeys.viewTransformerModel<Model>()
@@ -284,6 +285,7 @@ $ ./node_modules/.bin/lemon-fields gen --report
 [lemon-fields] report — 15 generated entries:
   callbackHead  src/modules/callback/model.ts#CallbackHead  fields(3): id, stereo, name
   callbackModel  src/modules/callback/model.ts#CallbackModel  fields(33): id, stereo, name, domain, clientIp, userAgent, state, parentId, parent$, no, target, qid, handler, result, requestedAt, responsedAt, $request, meta, hidden, optional, $, ns, type, sid, uid, gid, lock, next, createdAt, updatedAt, deletedAt, error, _id
+  # coreModel·testModel 두 줄은 lemon-core 4.3 미전환 프로젝트(src/cores/ 보유) 예시 출력이다
   coreModel  src/cores/abstract-services.ts#CoreModel  fields(16): $, ns, type, stereo, sid, uid, gid, lock, next, meta, createdAt, updatedAt, deletedAt, error, id, _id
   mockModel  src/modules/mock/model.ts#MockModel  fields(18): name, aliasId, meta, id, $, ns, type, stereo, sid, uid, gid, lock, next, createdAt, updatedAt, deletedAt, error, _id
   mockTestModel  src/modules/mock/model.ts#TestModel  fields(23): name, count, extra, Model, $identity, $, ns, type, stereo, sid, uid, gid, lock, next, meta, createdAt, updatedAt, deletedAt, error, id, _id, _idx, _date
