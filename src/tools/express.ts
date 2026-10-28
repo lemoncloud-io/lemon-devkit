@@ -108,6 +108,8 @@ export const buildExpress = (
         //NOTE! - OR, TRY TO LOAD CREDENTIALS BY PROFILE NAME.
         const NAME = $engine.environ('NAME', '') as string;
         const profile = $engine.environ('PROFILE', NAME) as string;
+        //* `none` says "no profile" explicitly: nothing to look up in the AWS files (the SDK default chain applies).
+        if (profile === 'none') return;
         // const credentials = new AWS.SharedIniFileCredentials({ profile });
         // if (profile) AWS.config.credentials = credentials;
         return asyncCredentials(profile).catch((e: Error): CrendentialForAWS | undefined => {
