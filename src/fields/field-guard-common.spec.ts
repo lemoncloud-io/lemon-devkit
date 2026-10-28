@@ -131,9 +131,7 @@ describe('runGuardCommon — cwd/out 기본값', () => {
             ].join('\n'),
         });
 
-        const res = runGuardCommon(
-            baseOpts(root, { out: 'registry/field-registry.ts', cwd: path.resolve(root, '.') }),
-        );
+        const res = runGuardCommon(baseOpts(root, { out: 'registry/field-registry.ts', cwd: path.resolve(root, '.') }));
 
         expect(res.guards.length).toBe(1);
         expect(res.guards[0].expected).toBe('ns,meta');
@@ -427,7 +425,9 @@ describe('runGuardCommon — expected fields 계산 (registry vs 폴백)', () =>
 
         const res = runGuardCommon(baseOpts(root, { out: 'src/generated/field-registry.ts' }));
         expect(res.guards.length).toBe(1);
-        expect(res.guards[0].expected).toBe('id,ns,cid,gid,sid,uid,lock,meta,next,type,error,stereo,createdAt,deletedAt,updatedAt');
+        expect(res.guards[0].expected).toBe(
+            'id,ns,cid,gid,sid,uid,lock,meta,next,type,error,stereo,createdAt,deletedAt,updatedAt',
+        );
     });
 
     it('registry 매칭이 없으면 DEFAULT_COMMON_MODEL_FIELDS로 폴백한다', () => {
