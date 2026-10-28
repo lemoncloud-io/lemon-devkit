@@ -81,6 +81,23 @@ describe('express', () => {
     });
 
     //* check id + cmd param
+    //* `PROFILE=none` says "no profile" explicitly: the route must not look the profile up in the AWS files.
+    it('should pass express route with PROFILE=none', async () => {
+        const saved = process.env.PROFILE;
+        process.env.PROFILE = 'none';
+        try {
+            const { $express } = await instance();
+            const app = $express.app;
+            expect2(await request(app).get('/test/abc'), 'status,body').toEqual({
+                status: 200,
+                body: { id: 'abc', hello: 'abc' },
+            });
+        } finally {
+            if (saved === undefined) delete process.env.PROFILE;
+            else process.env.PROFILE = saved;
+        }
+    });
+
     it('should pass express route: GET /test/abc/hi', async () => {
         const { $express } = await instance();
         const $exp = { status: 200, body: { id: 'abc', cmd: 'hi', hello: 'hi abc' } };
