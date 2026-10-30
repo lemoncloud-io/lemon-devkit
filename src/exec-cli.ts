@@ -12,10 +12,12 @@
  * @date        2019-08-01 initial optimized via `imweb-forms-api/run.js`
  * @date        2025-05-20 optimize for `lemon-core#v4`
  * @date        2026-09-02 refactor for import-safety (D1) - no top-level side-effects.
+ * @date        2026-10-30 drop deprecated `request` - Node `http`/`https` via `./tools/http-request` (B18).
  *
  * @copyright (C) lemoncloud.io 2025 - All Rights Reserved.
  */
-import request from 'request';
+//* B18: Node `http`/`https` client replaces the deprecated `request` package.
+import { httpRequest, ReqFn } from './tools/http-request';
 import { getRunParam, loadJsonSync } from './tools/shared';
 
 /** ********************************************************************************************************************
@@ -168,8 +170,8 @@ export const bootstrap = (): Config => {
 /** ********************************************************************************************************************
  *  main application
  ** *******************************************************************************************************************/
-//* do run http. `reqFn` is injectable (default: real `request`) so tests never hit the network.
-export const do_http = (options: any, reqFn: typeof request = request): Promise<any> => {
+//* do run http. `reqFn` is injectable (default: `httpRequest`, Node http/https) so tests never hit the network.
+export const do_http = (options: any, reqFn: ReqFn = httpRequest): Promise<any> => {
     if (!options || !options.uri) return Promise.reject(new Error('invalid options'));
     const { _inf, _err } = lemonCore();
     const NS = getNS();
@@ -320,7 +322,7 @@ const runBatchLoop = async (that: any, config: Config, httpFn: (options: any) =>
 };
 
 //* execute page by page. `ctx` is optional: {config, http} - omit either/both to fall back to
-//* `bootstrap()` (real env/package.json/engine) and the real `do_http` (network `request`), i.e.
+//* `bootstrap()` (real env/package.json/engine) and the real `do_http` (network `httpRequest`), i.e.
 //* the exact original behavior for 1-arg callers (deep-import compat: `dist/exec-cli.js`).
 export const run_batch = async (that: any, ctx?: RunBatchCtx): Promise<any> => {
     const config = ctx?.config ?? bootstrap();
