@@ -8,8 +8,9 @@
  * @copyright (C) lemoncloud.io 2026 - All Rights Reserved.
  */
 
-//* `request` does real network I/O - always mocked, never real, per the safety contract.
-vi.mock('request', () => ({ __esModule: true, default: vi.fn() }));
+//* `httpRequest` does real network I/O - always mocked, never real, per the safety contract.
+//* B18: the mock target moved from the removed `request` package to the local `./tools/http-request`.
+vi.mock('./tools/http-request', () => ({ httpRequest: vi.fn() }));
 
 //* `./tools/shared` is a local, side-effect-free module - mock only `loadJsonSync` (so
 //* `bootstrap()`'s package.json read is controllable) while keeping the REAL `getRunParam`
@@ -377,7 +378,7 @@ describe('Test exec-cli', () => {
         test('bootstraps exactly once even though run_batch may recurse across pages', async () => {
             const { run } = await import('./exec-cli');
             const shared: any = await import('./tools/shared');
-            const req: any = (await import('request')).default;
+            const req: any = (await import('./tools/http-request')).httpRequest;
             (shared.loadJsonSync as any).mockClear();
             (shared.loadJsonSync as any).mockReturnValue({ name: 'n', version: '1', port: 1234 });
             //* -wait 1 keeps the (mocked, network-free) chain's internal delay tiny for the test;

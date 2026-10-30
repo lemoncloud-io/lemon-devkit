@@ -76,6 +76,7 @@ CI에는 `npm run fields:check`를 추가하는 것을 권장한다.
 
 | Version   | Description
 |--         |--
+| 0.2.3 (Unreleased) | drop deprecated `request` (Node `http`/`https` in `exec-cli#do_http`), audit: `npm audit --omit=dev` 6 → 0.
 | 0.2.1     | removed proxy implementation guide and its postinstall injector.
 | 0.2.1     | `fields --check` compares registry by checksum/entry-count (incl. schemaVersion); exec-cli import-safe.
 | 0.2.0     | optimized with `lemon-core@4.2.x`.
